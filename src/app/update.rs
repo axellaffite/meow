@@ -178,7 +178,7 @@ impl App {
 
     /// Nothing the user would lose to a restart: no run, no open chat.
     fn idle_for_update(&self) -> bool {
-        self.run.is_none()
+        self.runs.is_empty()
             && !self.chat.is_visible()
             && !self.sync.is_running()
             && !self.agenda.is_running()

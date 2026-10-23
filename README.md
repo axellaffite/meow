@@ -18,7 +18,9 @@ use your regular Claude subscription, not API billing.
   tables, quotes and clickable links.
 - Working steps (tool calls, sub-agents, interim messages) are folded under a
   `▸ N steps` line above each answer; click it to show them.
-- **Esc** cancels a running request, or closes the chat.
+- **Esc** cancels the request of the conversation on screen, or closes the
+  chat. Other conversations (another task, a quick action) keep theirs running:
+  each conversation runs one request at a time, side by side with the others.
 - **New** (or `/new`, or ⌘N) starts a fresh conversation. Otherwise follow-ups
   continue the same Claude session (`--resume`).
 - **Right-click the cat** for the quick actions, Open Chat, New Conversation

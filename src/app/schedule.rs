@@ -37,7 +37,7 @@ impl App {
         }
         self.schedule.next_check = Instant::now() + CHECK_EVERY;
         let ready = matches!(self.claude, Some(Ok(_)));
-        if !ready || self.run.is_some() || self.chat.is_visible() {
+        if !ready || !self.runs.is_empty() || self.chat.is_visible() {
             return;
         }
         let now = now_secs();

@@ -1,5 +1,6 @@
 //! Sending requests to Claude and routing what comes back to the conversation
-//! that asked, even if another one is on screen by then.
+//! that asked, even if another one is on screen by then. Each conversation
+//! runs one request at a time; different conversations run side by side.
 
 use std::collections::HashMap;
 use std::sync::mpsc::TryRecvError;
@@ -24,19 +25,14 @@ pub enum RunKind {
 const AGENT_COMMAND: &str = "/agent";
 const UPDATE_COMMAND: &str = "/update";
 
-/// The one request in flight, and where its replies go.
+pub(super) const STILL_WORKING: &str = "Still working on the last request (Esc to cancel).";
+
+/// A request in flight; its conversation is its key in `App::runs`.
 pub struct ActiveRun {
     run: Run,
-    chat: ChatId,
     kind: RunKind,
     /// Running sub-agents, by launching tool call id.
     agents: HashMap<String, String>,
-}
-
-impl ActiveRun {
-    pub fn chat(&self) -> &ChatId {
-        &self.chat
-    }
 }
 
 impl App {
@@ -81,8 +77,8 @@ impl App {
 
     /// Sends `prompt` in conversation `id`, showing `label` as the user's line.
     pub(super) fn start_request(&mut self, id: &ChatId, label: &str, prompt: &str, kind: RunKind) {
-        if self.run.is_some() {
-            self.info_in(id, "Still working on the last request (Esc to cancel).");
+        if self.runs.contains_key(id) {
+            self.info_in(id, STILL_WORKING);
             return;
         }
         let env = match &self.claude {
@@ -108,13 +104,15 @@ impl App {
         };
         match started {
             Ok(run) => {
-                self.run = Some(ActiveRun {
-                    run,
-                    chat: id.clone(),
-                    kind,
-                    agents: HashMap::new(),
-                });
-                self.chat.set_busy(true);
+                self.runs.insert(
+                    id.clone(),
+                    ActiveRun {
+                        run,
+                        kind,
+                        agents: HashMap::new(),
+                    },
+                );
+                self.sync_busy();
                 self.refresh(id, true);
             }
             Err(error) => {
@@ -124,21 +122,32 @@ impl App {
         }
     }
 
-    pub(super) fn cancel_run(&mut self) {
-        let Some(active) = self.run.take() else {
+    /// Whether conversation `id` has a request in flight.
+    pub(super) fn is_running(&self, id: &ChatId) -> bool {
+        self.runs.contains_key(id)
+    }
+
+    /// Stops conversation `id`'s request; dropping the run kills Claude.
+    pub(super) fn cancel_run(&mut self, id: &ChatId) {
+        if self.runs.remove(id).is_none() {
             return;
-        };
-        self.chat.set_busy(false);
-        self.transcript(&active.chat).finish_turn("");
-        self.info_in(&active.chat, "Cancelled.");
+        }
+        self.conversations.get_mut(id).pending_session = None;
+        self.sync_busy();
+        self.transcript(id).finish_turn("");
+        self.info_in(id, "Cancelled.");
+    }
+
+    /// The "MEOW ···" title shows while any conversation waits on Claude.
+    fn sync_busy(&self) {
+        self.chat.set_busy(!self.runs.is_empty());
     }
 
     /// Starts the conversation on screen over, forgetting its Claude session.
     pub(super) fn new_conversation(&mut self) {
         let id = self.conversations.active().clone();
-        if self.run.as_ref().is_some_and(|active| active.chat == id) {
-            self.run = None;
-            self.chat.set_busy(false);
+        if self.runs.remove(&id).is_some() {
+            self.sync_busy();
         }
         let detached = self.detach_chat_agents(&id);
         self.conversations.get_mut(&id).reset();
@@ -158,23 +167,29 @@ impl App {
     }
 
     pub(super) fn poll_claude(&mut self) {
+        let ids: Vec<ChatId> = self.runs.keys().cloned().collect();
+        for id in ids {
+            self.poll_run(&id);
+        }
+    }
+
+    fn poll_run(&mut self, id: &ChatId) {
         loop {
-            let Some(active) = &self.run else { return };
+            let Some(active) = self.runs.get(id) else {
+                return;
+            };
             match active.run.events.try_recv() {
-                Ok(event) => self.on_claude_event(event),
+                Ok(event) => self.on_claude_event(id.clone(), event),
                 Err(TryRecvError::Empty) => return,
                 Err(TryRecvError::Disconnected) => {
-                    self.finish_run("");
+                    self.finish_run(id, "");
                     return;
                 }
             }
         }
     }
 
-    fn on_claude_event(&mut self, event: ClaudeEvent) {
-        let Some(id) = self.run.as_ref().map(|active| active.chat.clone()) else {
-            return;
-        };
+    fn on_claude_event(&mut self, id: ChatId, event: ClaudeEvent) {
         match event {
             ClaudeEvent::Session(session) => {
                 self.conversations.get_mut(&id).pending_session = Some(session);
@@ -200,12 +215,12 @@ impl App {
                 id: agent,
                 description,
             } => {
-                if let Some(active) = &mut self.run {
+                if let Some(active) = self.runs.get_mut(&id) {
                     active.agents.insert(agent, description);
                 }
             }
             ClaudeEvent::AgentFinished { id: agent } => {
-                let description = self.run.as_mut().and_then(|a| a.agents.remove(&agent));
+                let description = self.runs.get_mut(&id).and_then(|a| a.agents.remove(&agent));
                 if let Some(description) = description {
                     self.transcript(&id).tool(&format!("✓ {description}"));
                     self.refresh(&id, true);
@@ -220,21 +235,21 @@ impl App {
                 } else {
                     result
                 };
-                self.finish_run("");
+                self.finish_run(&id, "");
                 self.error_in(&id, &message);
             }
             ClaudeEvent::Done {
                 is_error: false,
                 result,
             } => {
-                let kind = self.run.as_ref().map_or(RunKind::Message, |run| run.kind);
+                let kind = self.runs.get(&id).map_or(RunKind::Message, |run| run.kind);
                 self.remember_session(&id, kind);
                 if kind == RunKind::Agent
                     && let (shown, Some(proposal)) = agent::extract(&result)
                 {
                     // The turn stays open: the agent's output follows in it.
-                    self.run = None;
-                    self.chat.set_busy(false);
+                    self.runs.remove(&id);
+                    self.sync_busy();
                     return self.hand_over_to_agent(&id, &shown, proposal);
                 }
                 let (shown, found) = tasks::extract(&result);
@@ -248,7 +263,7 @@ impl App {
                 if let (RunKind::Action, ChatId::Action(index)) = (kind, &id) {
                     self.record_action_result(*index, &shown, day_plan);
                 }
-                self.finish_run(&shown);
+                self.finish_run(&id, &shown);
                 if let Some(spec) = schedule {
                     self.apply_routine(&id, &spec);
                 }
@@ -257,7 +272,7 @@ impl App {
                 }
             }
             ClaudeEvent::Failed(reason) => {
-                self.finish_run("");
+                self.finish_run(&id, "");
                 self.error_in(&id, &reason);
             }
         }
@@ -287,19 +302,18 @@ impl App {
         }
     }
 
-    /// Ends the current request; `result` is the answer if no text was streamed.
-    fn finish_run(&mut self, result: &str) {
-        let Some(active) = self.run.take() else {
+    /// Ends conversation `id`'s request; `result` is the answer if no text was streamed.
+    fn finish_run(&mut self, id: &ChatId, result: &str) {
+        if self.runs.remove(id).is_none() {
             return;
-        };
-        let id = active.chat;
-        self.conversations.get_mut(&id).pending_session = None;
-        self.transcript(&id).finish_turn(result);
-        self.refresh(&id, true);
-        self.chat.set_busy(false);
-        if !self.chat.is_visible() || self.conversations.active() != &id {
+        }
+        self.conversations.get_mut(id).pending_session = None;
+        self.transcript(id).finish_turn(result);
+        self.refresh(id, true);
+        self.sync_busy();
+        if !self.chat.is_visible() || self.conversations.active() != id {
             self.unread = true;
-            self.unread_chat = id;
+            self.unread_chat = id.clone();
         }
     }
 }

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use meow::tasks::{self, FoundTask};
 
 use super::plan::open_url;
-use super::requests::RunKind;
+use super::requests::{RunKind, STILL_WORKING};
 use super::{App, now_secs};
 
 /// How long a ticked task offers "draft reply" before it is done with no reply.
@@ -98,15 +98,16 @@ impl App {
         let Some(id) = self.chat.tasks().id_at(row) else {
             return;
         };
-        if self.run.is_some() {
-            self.info("Still working on the last request (Esc to cancel).");
+        let chat = ChatId::Task(id.clone());
+        if self.is_running(&chat) {
+            self.chat_about_task_id(&id);
+            self.info_in(&chat, STILL_WORKING);
             return;
         }
         self.pending_done = None;
         self.tasks.set_done(&id, true, now_secs());
         self.tasks_changed();
         self.chat_about_task_id(&id);
-        let chat = ChatId::Task(id);
         let prompt = self.prompt_for(&chat, &tasks::done_reply_prompt());
         self.start_request(&chat, tasks::DONE_REPLY_REQUEST, &prompt, RunKind::Message);
     }

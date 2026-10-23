@@ -22,6 +22,7 @@ mod task_actions;
 mod update;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -115,7 +116,8 @@ struct App {
     last_tick: Instant,
     claude: Option<Result<ClaudeEnv, String>>,
     discovery: Option<Receiver<Result<ClaudeEnv, String>>>,
-    run: Option<ActiveRun>,
+    /// Requests in flight, one at most per conversation.
+    runs: HashMap<ChatId, ActiveRun>,
     actions: Vec<QuickAction>,
     /// The live Slack connection and conversation state.
     slack: slack::SlackState,
@@ -262,7 +264,7 @@ pub fn start(mtm: MainThreadMarker) {
         unread_chat: ChatId::Main,
         claude: None,
         discovery: Some(discovery),
-        run: None,
+        runs: HashMap::new(),
         actions,
         slack: slack::SlackState::new(),
         slack_assist: slack_assist::SlackAssist::default(),
@@ -409,7 +411,7 @@ impl App {
     fn inputs(&self) -> Inputs {
         Inputs {
             // Looking at a photo of the user's cat shows too: it takes a while.
-            busy: self.run.is_some() || self.cat_photo.is_running(),
+            busy: !self.runs.is_empty() || self.cat_photo.is_running(),
             chat_open: self.chat.is_visible(),
             unread: self.unread,
             news: self.activity.log.unread_count() > 0,
@@ -622,7 +624,15 @@ impl App {
             }
             UiEvent::ToggleSteps(turn) => self.toggle_steps(turn),
             UiEvent::Submit => self.submit(),
-            UiEvent::Escape if self.run.is_some() => self.cancel_run(),
+            // Esc stops the request of the conversation on screen, and only
+            // there: other pages and conversations keep theirs running.
+            UiEvent::Escape
+                if self.chat.page() == Page::Chat
+                    && self.is_running(self.conversations.active()) =>
+            {
+                let id = self.conversations.active().clone();
+                self.cancel_run(&id)
+            }
             UiEvent::Escape if self.chat.page() == Page::Slack && self.slack_assist_shown() => {
                 self.close_slack_assist()
             }
@@ -680,7 +690,7 @@ impl App {
         let fresh = self.fresh_conversation(&id);
         self.conversations.open(id.clone(), || fresh);
         self.update_chat_title();
-        let running = self.run.as_ref().is_some_and(|run| run.chat() == &id);
+        let running = self.is_running(&id);
         let has_plan = match id {
             ChatId::Action(index) => self.plan_of(index).is_some(),
             ChatId::Main | ChatId::Task(_) => false,
