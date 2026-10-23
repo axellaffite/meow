@@ -62,7 +62,11 @@ impl Theme {
             MainThreadMarker::new().and_then(photo_picker::pick)
         });
         // Before any window is built: every view reads it as it is made.
-        style::set(theme.appearance.style);
+        // `MEOW_STYLE` (pixel or classic) overrides it, to try one without saving it.
+        let tried = std::env::var("MEOW_STYLE")
+            .ok()
+            .and_then(|name| serde_json::from_value(serde_json::Value::String(name)).ok());
+        style::set(tried.unwrap_or(theme.appearance.style));
         theme
     }
 

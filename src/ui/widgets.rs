@@ -16,6 +16,8 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSNotification, NSPoint, NSRange, NSRect, NSSize, NSString};
 
+use meow::style;
+
 use super::bubble;
 use super::rich_text::{self, Attributes};
 use super::theme;
@@ -25,6 +27,8 @@ const FIELD_BORDER: f64 = 3.0;
 /// Text inset from a field's left and right edges, inside its border.
 const FIELD_INSET: f64 = FIELD_BORDER + 10.0;
 const CHECKBOX_SIZE: f64 = 18.0;
+/// Corner radius of cards, fields and buttons in the classic style.
+const CLASSIC_RADIUS: f64 = 6.0;
 /// One "pixel" of the checkbox drawing.
 const CHECKBOX_PIXEL: f64 = 3.0;
 
@@ -277,12 +281,20 @@ pub fn paint(view: &NSView, fill: Option<&NSColor>, border: Option<(&NSColor, f6
     let Some(layer) = view.layer() else {
         return;
     };
-    layer.setCornerRadius(0.0);
+    // The classic style rounds the corners (less on thin strips) and draws hairline borders.
+    let classic = style::is_classic();
+    let radius = if classic {
+        let size = view.frame().size;
+        CLASSIC_RADIUS.min(size.width.min(size.height) / 2.0)
+    } else {
+        0.0
+    };
+    layer.setCornerRadius(radius);
     layer.setBackgroundColor(fill.map(|color| color.CGColor()).as_deref());
     match border {
         Some((color, width)) => {
             layer.setBorderColor(Some(&color.CGColor()));
-            layer.setBorderWidth(width);
+            layer.setBorderWidth(if classic { 1.0 } else { width });
         }
         None => layer.setBorderWidth(0.0),
     }
@@ -513,6 +525,10 @@ fn place_button(
 }
 
 fn underline_color(style: ButtonStyle) -> Option<Retained<NSColor>> {
+    // The bevel is a pixel-art touch.
+    if style::is_classic() {
+        return None;
+    }
     match style {
         ButtonStyle::Primary | ButtonStyle::Accent => Some(theme::primary_shade()),
         ButtonStyle::Go => Some(theme::live_shade()),
@@ -534,8 +550,14 @@ pub fn set_text_button_label(button: &NSButton, label: &str, style: ButtonStyle)
         ButtonStyle::Quiet | ButtonStyle::OutlineAccent | ButtonStyle::OutlineLink => theme::ink(),
         ButtonStyle::Link => theme::highlight(),
     };
+    // Silkscreen has capitals only; the classic style keeps the label as written.
+    let label = if style::is_classic() {
+        label.to_string()
+    } else {
+        label.to_uppercase()
+    };
     button.setAttributedTitle(&rich_text::attributed(
-        &label.to_uppercase(),
+        &label,
         &Attributes::plain(color, theme::label_font(theme::LABEL_SIZE)),
     ));
 }
@@ -581,7 +603,9 @@ fn checkbox_image(on: bool) -> Retained<NSImage> {
     };
     #[allow(deprecated)]
     image.lockFocus();
-    if on {
+    if style::is_classic() {
+        classic_checkbox(on);
+    } else if on {
         square(0.0, &theme::live());
         square(CHECKBOX_PIXEL, &theme::sidebar());
         square(2.0 * CHECKBOX_PIXEL, &theme::live());
@@ -592,6 +616,32 @@ fn checkbox_image(on: bool) -> Retained<NSImage> {
     #[allow(deprecated)]
     image.unlockFocus();
     image
+}
+
+/// A rounded box with a hairline border, filled with a tick mark when on.
+fn classic_checkbox(on: bool) {
+    let inset = 1.0;
+    let side = CHECKBOX_SIZE - 2.0 * inset;
+    let rect = NSRect::new(NSPoint::new(inset, inset), NSSize::new(side, side));
+    let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 4.0, 4.0);
+    if on {
+        theme::live().setFill();
+        path.fill();
+        let tick = NSBezierPath::bezierPath();
+        // The image is not flipped: y grows upward.
+        tick.moveToPoint(NSPoint::new(5.0, 9.0));
+        tick.lineToPoint(NSPoint::new(8.0, 5.5));
+        tick.lineToPoint(NSPoint::new(13.5, 12.5));
+        tick.setLineWidth(2.0);
+        theme::on_accent().setStroke();
+        tick.stroke();
+    } else {
+        theme::field_background().setFill();
+        path.fill();
+        theme::muted().setStroke();
+        path.setLineWidth(1.0);
+        path.stroke();
+    }
 }
 
 /// `frame` drawn with each pixel `scale` points square; transparent pixels stay clear.
