@@ -12,6 +12,7 @@ use objc2_foundation::NSString;
 use meow::actions::QuickAction;
 use meow::settings::Settings;
 use meow::sprites::Coat;
+use meow::style::Style;
 
 use super::controller::Controller;
 
@@ -165,6 +166,19 @@ pub fn fill_coat_menu(
     if let Some(custom) = settings.current_custom() {
         let title = format!("Remove \u{201c}{}\u{201d}", custom.name);
         menu.addItem(&item(mtm, &title, sel!(removeCoat:), "", Some(target)));
+    }
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    menu.addItem(&label(mtm, "Style (relaunches Meow)"));
+    for (index, style) in Style::ALL.into_iter().enumerate() {
+        let entry = item(mtm, style.name(), sel!(setStyle:), "", Some(target));
+        entry.setTag(index as isize);
+        let state = if style == settings.style {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        };
+        entry.setState(state);
+        menu.addItem(&entry);
     }
 }
 

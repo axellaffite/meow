@@ -21,6 +21,7 @@ pub mod settings;
 pub mod slack;
 pub mod source;
 pub mod sprites;
+pub mod style;
 pub mod superset;
 pub mod sync;
 pub mod tasks;

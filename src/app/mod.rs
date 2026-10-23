@@ -162,6 +162,8 @@ pub fn start(mtm: MainThreadMarker) {
     let controller = Controller::new(mtm);
     let (actions, actions_error) = load_actions();
     let (settings, settings_path, settings_error) = coat::load_settings();
+    // Before any window is built: every view reads it as it is made.
+    meow::style::set(settings.style);
     menus::install_main_menu(mtm, &controller);
     let (cat_menu, coat_menu) = menus::cat_menu(
         mtm,
@@ -559,6 +561,7 @@ impl App {
             UiEvent::Drop => self.cat.release(),
             UiEvent::Stroke(distance) => self.cat.stroke(distance),
             UiEvent::SetCoat(index) => self.set_coat(index),
+            UiEvent::SetStyle(index) => self.set_style(index),
             UiEvent::AddCoatFromPhoto => self.add_coat_from_photo(),
             UiEvent::RemoveCoat => self.remove_coat(),
             UiEvent::Feed | UiEvent::ReleaseMouse => self.play(event),

@@ -48,6 +48,13 @@ define_class!(
         }
 
         /// Theme menu items: the sender's tag is the coat index.
+        #[unsafe(method(setStyle:))]
+        fn set_style(&self, sender: Option<&AnyObject>) {
+            if let Some(index) = sender_tag(sender) {
+                push(UiEvent::SetStyle(index));
+            }
+        }
+
         #[unsafe(method(setCoat:))]
         fn set_coat(&self, sender: Option<&AnyObject>) {
             if let Some(index) = sender_tag(sender) {

@@ -10,7 +10,10 @@ use meow::cat_photo::{self, CustomCoat};
 use meow::claude::{ClaudeEvent, Run};
 use meow::conversations::ChatId;
 use meow::settings::{self, Settings};
+use meow::style::Style;
+use meow::update;
 
+use crate::ui::events::UiEvent;
 use crate::ui::{menus, photo_picker};
 
 use super::App;
@@ -70,6 +73,28 @@ impl App {
             coat,
             ..self.settings.clone()
         });
+    }
+
+    /// Saves the new look and relaunches, as windows take it when they are built.
+    pub(super) fn set_style(&mut self, index: usize) {
+        let Some(style) = Style::ALL.get(index).copied() else {
+            return;
+        };
+        if style == self.settings.style {
+            return;
+        }
+        self.apply_settings(Settings {
+            style,
+            ..self.settings.clone()
+        });
+        let bundle = std::env::current_exe()
+            .ok()
+            .and_then(|exe| update::bundle_of(&exe));
+        match bundle.map(|bundle| update::relaunch(&bundle)) {
+            Some(Ok(())) => self.handle(UiEvent::Quit),
+            Some(Err(error)) => self.error_in(&ChatId::Main, &error),
+            None => self.info_in(&ChatId::Main, "Restart Meow to see the new style."),
+        }
     }
 
     pub(super) fn remove_coat(&mut self) {
