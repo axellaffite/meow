@@ -24,6 +24,8 @@ pub enum Coat {
     Alfie,
     /// Not a cat: a pink pig with mud on his flank, who poops and eats it.
     Dede,
+    /// Not a cat either: a red and white corgi, long, low and big-eared.
+    Corgi,
     /// Colors read from a photo of the user's own cat.
     Custom(Palette),
 }
@@ -89,8 +91,34 @@ const DEDE: Palette = Palette {
     far_eye: OUTLINE,
 };
 
+const CORGI: Palette = Palette {
+    fur: [222, 140, 62],
+    // The darker saddle on the back.
+    stripe: [190, 110, 46],
+    blaze: WHITE,
+    muzzle: WHITE,
+    legs: WHITE,
+    tail: [222, 140, 62],
+    near_eye: [70, 44, 30],
+    far_eye: [70, 44, 30],
+};
+
+/// The animal a coat is drawn as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Animal {
+    Cat,
+    Pig,
+    Corgi,
+}
+
 impl Coat {
-    pub const ALL: [Coat; 4] = [Coat::Ginger, Coat::Willow, Coat::Alfie, Coat::Dede];
+    pub const ALL: [Coat; 5] = [
+        Coat::Ginger,
+        Coat::Willow,
+        Coat::Alfie,
+        Coat::Dede,
+        Coat::Corgi,
+    ];
 
     /// The name of a built-in coat; custom ones are named in the settings.
     pub fn name(self) -> &'static str {
@@ -99,6 +127,7 @@ impl Coat {
             Coat::Willow => "Willow",
             Coat::Alfie => "Alfie",
             Coat::Dede => "Dédé",
+            Coat::Corgi => "Corgi",
             Coat::Custom(_) => "My Cat",
         }
     }
@@ -109,6 +138,7 @@ impl Coat {
             Coat::Willow => &WILLOW,
             Coat::Alfie => &ALFIE,
             Coat::Dede => &DEDE,
+            Coat::Corgi => &CORGI,
             Coat::Custom(palette) => palette,
         }
     }
@@ -116,6 +146,14 @@ impl Coat {
     /// Dédé is drawn as a pig, and poops where a cat coughs up hairballs.
     pub fn is_pig(self) -> bool {
         self == Coat::Dede
+    }
+
+    pub fn animal(self) -> Animal {
+        match self {
+            Coat::Dede => Animal::Pig,
+            Coat::Corgi => Animal::Corgi,
+            _ => Animal::Cat,
+        }
     }
 
     /// The color of a sprite cell; `None` for anything else (transparent).

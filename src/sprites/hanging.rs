@@ -1,7 +1,7 @@
 //! The cat held by the scruff: seen from the front, hanging limp, swinging
 //! like a pendulum from the pinch point.
 
-use super::{CANVAS_H, Grid};
+use super::{Animal, CANVAS_H, Grid};
 
 /// Canvas pixel (column, row) the cat hangs from, the pinch at the top of the tuft.
 pub const SCRUFF: (usize, usize) = (12, HANG_TOP);
@@ -44,10 +44,10 @@ pub enum Kick {
 /// Draws the hanging cat; `swing` is the sideways offset of its lowest row, in pixels.
 pub(super) fn draw_hanging(grid: &mut Grid, swing: i8, kick: Kick) {
     let mut cat = grid.blank();
-    let head_and_body: &[&str] = if grid.pig {
-        &super::pig::HANGING
-    } else {
-        &HEAD_AND_BODY
+    let head_and_body: &[&str] = match grid.animal {
+        Animal::Cat => &HEAD_AND_BODY,
+        Animal::Pig => &super::pig::HANGING,
+        Animal::Corgi => &super::corgi::HANGING,
     };
     cat.blit(head_and_body, HANG_X, HANG_TOP);
     let legs_top = HANG_TOP + head_and_body.len();
