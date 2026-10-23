@@ -1,12 +1,15 @@
 //! The main window drawn as the cat's speech bubble: a pixel-art box with
-//! stepped corners, a drop shadow, and a tail pointing down at the cat.
+//! stepped corners, a drop shadow, and a tail pointing down at the cat; in
+//! the classic style, a rounded box with a soft shadow.
 
 use std::cell::Cell;
 
+use meow::style;
 use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSBackingStoreType, NSBezierPath, NSColor, NSPanel, NSView, NSWindowStyleMask,
+    NSBackingStoreType, NSBezierPath, NSColor, NSGraphicsContext, NSPanel, NSShadow, NSView,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
@@ -14,6 +17,8 @@ use super::theme;
 
 /// One "pixel" of the bubble, matching the cat sprite's scale.
 pub const PIXEL: f64 = 3.0;
+/// Corner radius of the classic style's bubble.
+const CLASSIC_RADIUS: f64 = 14.0;
 const SHADOW: f64 = 2.0 * PIXEL;
 const TAIL_ROWS: usize = 4;
 const TAIL_HEIGHT: f64 = TAIL_ROWS as f64 * PIXEL;
@@ -109,6 +114,9 @@ impl BubbleView {
     fn draw(&self) {
         let body = body_rect(self.bounds());
         let tail_x = self.ivars().tail_x.get();
+        if style::is_classic() {
+            return self.draw_classic(body, tail_x);
+        }
         let shadow = offset(body, SHADOW);
 
         fill(&stepped(shadow), &theme::shadow());
@@ -118,6 +126,42 @@ impl BubbleView {
         fill(&stepped(inset(body, PIXEL)), &theme::paper());
         self.draw_sidebar(body);
         fill(&tail_inside(body, tail_x), &theme::paper());
+    }
+
+    /// The classic style's bubble: rounded, a hairline outline, a smooth tail
+    /// and a soft shadow, with the sidebar clipped to its left side.
+    fn draw_classic(&self, body: NSRect, tail_x: f64) {
+        let outline = classic_outline(body, tail_x);
+        NSGraphicsContext::saveGraphicsState_class();
+        let shadow = NSShadow::new();
+        shadow.setShadowColor(Some(&theme::shadow().colorWithAlphaComponent(0.45)));
+        shadow.setShadowBlurRadius(SHADOW);
+        // Shadow offsets ignore the flip: negative y is down on screen.
+        shadow.setShadowOffset(NSSize::new(1.0, -2.0));
+        shadow.set();
+        theme::paper().setFill();
+        outline.fill();
+        NSGraphicsContext::restoreGraphicsState_class();
+
+        let right = self.ivars().sidebar_right.get();
+        if right > 0.0 {
+            NSGraphicsContext::saveGraphicsState_class();
+            outline.addClip();
+            theme::sidebar().setFill();
+            let column = rect(
+                body.origin.x,
+                body.origin.y,
+                right - body.origin.x,
+                body.size.height,
+            );
+            NSBezierPath::fillRect(column);
+            theme::divider().setFill();
+            NSBezierPath::fillRect(rect(right, body.origin.y, 1.0, body.size.height));
+            NSGraphicsContext::restoreGraphicsState_class();
+        }
+        theme::outline().setStroke();
+        outline.setLineWidth(1.0);
+        outline.stroke();
     }
 
     fn draw_sidebar(&self, body: NSRect) {
@@ -139,6 +183,33 @@ impl BubbleView {
         );
         fill(&[divider], &theme::divider());
     }
+}
+
+/// The rounded box and its tail as one outline, for the classic style.
+fn classic_outline(body: NSRect, tail_x: f64) -> Retained<NSBezierPath> {
+    let r = inset(body, 0.5);
+    let (left, top) = (r.origin.x, r.origin.y);
+    let (right, bottom) = (left + r.size.width, top + r.size.height);
+    let width = (TAIL_ROWS - 1) as f64 * PIXEL;
+    let corner = |path: &NSBezierPath, at: (f64, f64), to: (f64, f64)| {
+        path.appendBezierPathWithArcFromPoint_toPoint_radius(
+            NSPoint::new(at.0, at.1),
+            NSPoint::new(to.0, to.1),
+            CLASSIC_RADIUS,
+        );
+    };
+    // Clockwise on screen (the view is flipped), the tail cut into the bottom edge.
+    let path = NSBezierPath::bezierPath();
+    path.moveToPoint(NSPoint::new(left + CLASSIC_RADIUS, top));
+    corner(&path, (right, top), (right, bottom));
+    corner(&path, (right, bottom), (left, bottom));
+    path.lineToPoint(NSPoint::new(tail_x + width, bottom));
+    path.lineToPoint(NSPoint::new(tail_x + 2.0, bottom + TAIL_HEIGHT - 1.0));
+    path.lineToPoint(NSPoint::new(tail_x, bottom));
+    corner(&path, (left, bottom), (left, top));
+    corner(&path, (left, top), (right, top));
+    path.closePath();
+    path
 }
 
 /// The box without the tail and shadow.

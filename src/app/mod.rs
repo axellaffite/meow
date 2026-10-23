@@ -163,7 +163,12 @@ pub fn start(mtm: MainThreadMarker) {
     let (actions, actions_error) = load_actions();
     let (settings, settings_path, settings_error) = coat::load_settings();
     // Before any window is built: every view reads it as it is made.
-    meow::style::set(settings.style);
+    // `MEOW_STYLE` (pixel or classic) overrides it, to try one without saving it.
+    let style = std::env::var("MEOW_STYLE")
+        .ok()
+        .and_then(|name| serde_json::from_value(serde_json::Value::String(name)).ok())
+        .unwrap_or(settings.style);
+    meow::style::set(style);
     menus::install_main_menu(mtm, &controller);
     let (cat_menu, coat_menu) = menus::cat_menu(
         mtm,
