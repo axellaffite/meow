@@ -173,6 +173,7 @@ pub fn start(mtm: MainThreadMarker) {
     let cat_window = CatWindow::new(mtm, &cat_menu);
     let prop_window = CatWindow::prop(mtm);
     let chat = ChatWindow::new(mtm, &controller, &actions);
+    chat.set_size(settings.window_size.points());
     chat.set_coat(settings.coat);
 
     let mut main = Transcript::default();
@@ -559,6 +560,7 @@ impl App {
             UiEvent::Drop => self.cat.release(),
             UiEvent::Stroke(distance) => self.cat.stroke(distance),
             UiEvent::SetCoat(index) => self.set_coat(index),
+            UiEvent::SetWindowSize(index) => self.set_window_size(index),
             UiEvent::AddCoatFromPhoto => self.add_coat_from_photo(),
             UiEvent::RemoveCoat => self.remove_coat(),
             UiEvent::Feed | UiEvent::ReleaseMouse => self.play(event),

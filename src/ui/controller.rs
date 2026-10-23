@@ -48,6 +48,13 @@ define_class!(
         }
 
         /// Theme menu items: the sender's tag is the coat index.
+        #[unsafe(method(setWindowSize:))]
+        fn set_window_size(&self, sender: Option<&AnyObject>) {
+            if let Some(index) = sender_tag(sender) {
+                push(UiEvent::SetWindowSize(index));
+            }
+        }
+
         #[unsafe(method(setCoat:))]
         fn set_coat(&self, sender: Option<&AnyObject>) {
             if let Some(index) = sender_tag(sender) {

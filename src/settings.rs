@@ -15,6 +15,39 @@ pub struct Settings {
     pub custom_coats: Vec<CustomCoat>,
     /// Slack drafts follow the user's learned style guide.
     pub write_as_me: bool,
+    /// The chat bubble's size when it opens.
+    pub window_size: WindowSize,
+}
+
+/// How big the chat bubble opens; it can still be resized by hand.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowSize {
+    #[default]
+    Standard,
+    Large,
+    Huge,
+}
+
+impl WindowSize {
+    pub const ALL: [WindowSize; 3] = [WindowSize::Standard, WindowSize::Large, WindowSize::Huge];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            WindowSize::Standard => "Standard",
+            WindowSize::Large => "Large",
+            WindowSize::Huge => "Extra Large",
+        }
+    }
+
+    /// Width and height in points, before fitting the screen.
+    pub fn points(self) -> (f64, f64) {
+        match self {
+            WindowSize::Standard => (620.0, 470.0),
+            WindowSize::Large => (860.0, 640.0),
+            WindowSize::Huge => (1120.0, 820.0),
+        }
+    }
 }
 
 impl Settings {

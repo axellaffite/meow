@@ -10,7 +10,7 @@ use objc2_app_kit::{
 use objc2_foundation::NSString;
 
 use meow::actions::QuickAction;
-use meow::settings::Settings;
+use meow::settings::{Settings, WindowSize};
 use meow::sprites::Coat;
 
 use super::controller::Controller;
@@ -165,6 +165,19 @@ pub fn fill_coat_menu(
     if let Some(custom) = settings.current_custom() {
         let title = format!("Remove \u{201c}{}\u{201d}", custom.name);
         menu.addItem(&item(mtm, &title, sel!(removeCoat:), "", Some(target)));
+    }
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    menu.addItem(&label(mtm, "Window Size"));
+    for (index, size) in WindowSize::ALL.into_iter().enumerate() {
+        let entry = item(mtm, size.name(), sel!(setWindowSize:), "", Some(target));
+        entry.setTag(index as isize);
+        let state = if size == settings.window_size {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        };
+        entry.setState(state);
+        menu.addItem(&entry);
     }
 }
 

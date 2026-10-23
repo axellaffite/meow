@@ -42,6 +42,9 @@ const SUBTITLE_GAP: f64 = 16.0;
 
 pub struct ChatWindow {
     panel: Retained<BubblePanel>,
+    /// The size picked in the settings, while the bubble is shrunk to fit a
+    /// smaller screen; restored the next time it opens.
+    unfitted: Cell<Option<NSSize>>,
     bubble: Retained<BubbleView>,
     sidebar: Sidebar,
     chat: ChatPage,
@@ -149,6 +152,7 @@ impl ChatWindow {
 
         let window = Self {
             panel,
+            unfitted: Cell::new(None),
             bubble,
             sidebar,
             chat,
@@ -345,16 +349,40 @@ impl ChatWindow {
         }
     }
 
+    /// Sets the bubble's size (`width`, `height` in points); it is fitted to
+    /// the screen when it opens.
+    pub fn set_size(&self, (width, height): (f64, f64)) {
+        self.unfitted.set(None);
+        self.panel.setContentSize(NSSize::new(width, height));
+    }
+
     /// Opens the bubble just above `anchor` (the cat), kept on screen, with
     /// its tail pointing at the cat.
     pub fn show_above(&self, anchor: NSRect, mtm: MainThreadMarker) {
-        let size = self.panel.frame().size;
+        if let Some(wanted) = self.unfitted.take() {
+            self.panel.setContentSize(wanted);
+        }
+        let mut size = self.panel.frame().size;
         let cat_center = anchor.origin.x + anchor.size.width / 2.0;
         let mut x = cat_center - size.width / 2.0;
         let mut y = anchor.origin.y + anchor.size.height;
         let anchor_center = NSPoint::new(cat_center, anchor.origin.y + anchor.size.height / 2.0);
         if let Some(screen) = screens::showing(mtm, anchor_center) {
             let visible = screen.visibleFrame();
+            // A big bubble on a small screen shrinks to fit above the cat.
+            let room = NSSize::new(
+                visible.size.width,
+                visible.origin.y + visible.size.height - y,
+            );
+            if size.width > room.width || size.height > room.height {
+                self.unfitted.set(Some(size));
+                size = NSSize::new(
+                    size.width.min(room.width).max(MIN_SIZE.width),
+                    size.height.min(room.height).max(MIN_SIZE.height),
+                );
+                self.panel.setContentSize(size);
+            }
+            x = cat_center - size.width / 2.0;
             x = x.clamp(
                 visible.origin.x,
                 visible.origin.x + visible.size.width - size.width,

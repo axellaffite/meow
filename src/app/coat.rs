@@ -9,7 +9,7 @@ use std::thread;
 use meow::cat_photo::{self, CustomCoat};
 use meow::claude::{ClaudeEvent, Run};
 use meow::conversations::ChatId;
-use meow::settings::{self, Settings};
+use meow::settings::{self, Settings, WindowSize};
 
 use crate::ui::{menus, photo_picker};
 
@@ -68,6 +68,18 @@ impl App {
         };
         self.apply_settings(Settings {
             coat,
+            ..self.settings.clone()
+        });
+    }
+
+    /// Saves the size the bubble opens at and resizes it now.
+    pub(super) fn set_window_size(&mut self, index: usize) {
+        let Some(window_size) = WindowSize::ALL.get(index).copied() else {
+            return;
+        };
+        self.chat.set_size(window_size.points());
+        self.apply_settings(Settings {
+            window_size,
             ..self.settings.clone()
         });
     }

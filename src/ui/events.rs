@@ -21,6 +21,8 @@ pub enum UiEvent {
     Stroke(f64),
     /// Index into the themes listed by `Settings::coats`.
     SetCoat(usize),
+    /// Index into `WindowSize::ALL`.
+    SetWindowSize(usize),
     /// Make a theme from a photo of the user's cat.
     AddCoatFromPhoto,
     /// Remove the custom theme being worn.
