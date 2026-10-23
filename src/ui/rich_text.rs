@@ -1,6 +1,7 @@
 //! Builds attributed strings for the transcript, including rendered Markdown.
 
 use meow::markdown::{self, Span};
+use meow::style;
 use meow::transcript::Block;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -56,7 +57,12 @@ pub fn attributed(text: &str, attributes: &Attributes) -> Retained<NSAttributedS
     // SAFETY: AppKit's attribute-name constants are immutable statics.
     let mut keys: Vec<&NSAttributedStringKey> =
         unsafe { vec![NSForegroundColorAttributeName, NSFontAttributeName] };
-    let mut values: Vec<&AnyObject> = vec![&attributes.color, &attributes.font];
+    // The classic style's system font has a real bold, so no stroke is faked.
+    let classic_bold = (attributes.heavy && style::is_classic())
+        .then(|| NSFont::boldSystemFontOfSize(attributes.font.pointSize()));
+    let heavy = attributes.heavy && classic_bold.is_none();
+    let font = classic_bold.as_ref().unwrap_or(&attributes.font);
+    let mut values: Vec<&AnyObject> = vec![&attributes.color, font];
     if let Some(background) = &attributes.background {
         keys.push(unsafe { NSBackgroundColorAttributeName });
         values.push(background);
@@ -73,7 +79,7 @@ pub fn attributed(text: &str, attributes: &Attributes) -> Retained<NSAttributedS
         keys.push(unsafe { NSUnderlineStyleAttributeName });
         values.push(&single_line);
     }
-    if attributes.heavy {
+    if heavy {
         keys.push(unsafe { NSStrokeWidthAttributeName });
         values.push(&stroke);
     }

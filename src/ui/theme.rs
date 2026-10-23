@@ -7,8 +7,9 @@
 
 use std::cell::RefCell;
 
+use meow::style;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSColor, NSFont};
+use objc2_app_kit::{NSColor, NSFont, NSFontWeightSemibold};
 use objc2_core_foundation::{CFData, CFRetained};
 use objc2_core_text::{CTFont, CTFontDescriptor, CTFontManagerCreateFontDescriptorFromData};
 
@@ -89,18 +90,42 @@ fn named_or_fallback(name: &str, size: f64) -> Retained<NSFont> {
 }
 
 /// The body font. Bold text is drawn with a stroke (see `Attributes::heavy`).
+/// In the classic style, the system font, a little smaller: VT323 is drawn
+/// small for its point size.
 pub fn font(size: f64) -> Retained<NSFont> {
+    if style::is_classic() {
+        return NSFont::systemFontOfSize(classic_body_size(size));
+    }
     named_or_fallback(BODY_FONT, size)
 }
 
-/// The label font: blocky capitals for page names, headings and buttons.
+fn classic_body_size(size: f64) -> f64 {
+    (size * 0.78).round()
+}
+
+/// The label font: blocky capitals for page names, headings and buttons; in
+/// the classic style, the system font in semibold.
 pub fn label_font(size: f64) -> Retained<NSFont> {
+    if style::is_classic() {
+        // SAFETY: AppKit's font weight constants are immutable statics.
+        let semibold = unsafe { NSFontWeightSemibold };
+        return NSFont::systemFontOfSize_weight(size + 1.0, semibold);
+    }
     named_or_fallback(LABEL_FONT, size)
 }
 
-/// The title font, for the MEOW wordmark and page titles.
+/// The title font, for the MEOW wordmark and page titles; in the classic
+/// style, the system font in bold.
 pub fn title_font(size: f64) -> Retained<NSFont> {
+    if style::is_classic() {
+        return NSFont::boldSystemFontOfSize((size * 1.25).round());
+    }
     named_or_fallback(TITLE_FONT, size)
+}
+
+/// The pixel-art color, or the classic one in the classic style.
+fn pick(pixel: u32, classic: u32) -> Retained<NSColor> {
+    rgb(if style::is_classic() { classic } else { pixel })
 }
 
 fn rgb(hex: u32) -> Retained<NSColor> {
@@ -110,112 +135,112 @@ fn rgb(hex: u32) -> Retained<NSColor> {
 
 /// Main text: off-white on the dark panels.
 pub fn ink() -> Retained<NSColor> {
-    rgb(0xf4f4f4)
+    pick(0xf4f4f4, 0xf2f2f5)
 }
 
 /// Text drawn on the light fills (selected page, buttons).
 pub fn on_accent() -> Retained<NSColor> {
-    rgb(0x1a1c2c)
+    pick(0x1a1c2c, 0xffffff)
 }
 
 pub fn muted() -> Retained<NSColor> {
-    rgb(0x94b0c2)
+    pick(0x94b0c2, 0xa1a1aa)
 }
 
 pub fn faint() -> Retained<NSColor> {
-    rgb(0x7c8ba3)
+    pick(0x7c8ba3, 0x80808a)
 }
 
 /// The bubble's pixel outline.
 pub fn outline() -> Retained<NSColor> {
-    rgb(0xf4f4f4)
+    pick(0xf4f4f4, 0x3a3a40)
 }
 
 /// Bubble fill.
 pub fn paper() -> Retained<NSColor> {
-    rgb(0x333c57)
+    pick(0x333c57, 0x1f1f23)
 }
 
 pub fn sidebar() -> Retained<NSColor> {
-    rgb(0x1a1c2c)
+    pick(0x1a1c2c, 0x18181b)
 }
 
 pub fn divider() -> Retained<NSColor> {
-    rgb(0xf4f4f4)
+    pick(0xf4f4f4, 0x34343a)
 }
 
 /// The cat's orange fur.
 pub fn accent() -> Retained<NSColor> {
-    rgb(0xef7d57)
+    pick(0xef7d57, 0x4c8dff)
 }
 
 /// Gold: page titles, section headings and the main buttons.
 pub fn highlight() -> Retained<NSColor> {
-    rgb(0xffcd75)
+    pick(0xffcd75, 0x4c8dff)
 }
 
 /// The darker line under a gold button.
 pub fn primary_shade() -> Retained<NSColor> {
-    rgb(0xb13e53)
+    pick(0xb13e53, 0x2f6fe0)
 }
 
 /// The darker line under a green button.
 pub fn live_shade() -> Retained<NSColor> {
-    rgb(0x38b764)
+    pick(0x38b764, 0x248a4e)
 }
 
 /// Background of the user's own messages.
 pub fn user_bubble() -> Retained<NSColor> {
-    rgb(0x3b5dc9)
+    pick(0x3b5dc9, 0x2c4a80)
 }
 
 /// Cyan: one of the Slack avatar colors.
 pub fn cyan() -> Retained<NSColor> {
-    rgb(0x73eff7)
+    pick(0x73eff7, 0x5ac8fa)
 }
 
 pub fn link() -> Retained<NSColor> {
-    rgb(0x41a6f6)
+    pick(0x41a6f6, 0x6aa8ff)
 }
 
 pub fn error() -> Retained<NSColor> {
-    rgb(0xff7b7b)
+    pick(0xff7b7b, 0xff6b6b)
 }
 
 /// Emphasis: italic text is tinted.
 pub fn emphasis() -> Retained<NSColor> {
-    rgb(0xffcd75)
+    pick(0xffcd75, 0xe4e4e7)
 }
 
 pub fn code_background() -> Retained<NSColor> {
-    rgb(0x1a1c2c)
+    pick(0x1a1c2c, 0x141417)
 }
 
 pub fn field_background() -> Retained<NSColor> {
-    rgb(0x262b44)
+    pick(0x262b44, 0x2a2a2f)
 }
 
 /// Background of a list card (a task, an agenda item).
 pub fn card() -> Retained<NSColor> {
-    rgb(0x262b44)
+    pick(0x262b44, 0x27272c)
 }
 
 /// A done card: lighter, so it recedes from the open ones.
 pub fn card_done() -> Retained<NSColor> {
-    rgb(0x3e4866)
+    pick(0x3e4866, 0x1f1f23)
 }
 
 /// Pixel border of fields and secondary buttons.
 pub fn field_border() -> Retained<NSColor> {
-    rgb(0x566c86)
+    pick(0x566c86, 0x45454d)
 }
 
 /// Green: live status, send buttons, ticked checkboxes.
 pub fn live() -> Retained<NSColor> {
-    rgb(0xa7f070)
+    pick(0xa7f070, 0x34c759)
 }
 
 /// The bubble's hard drop shadow.
 pub fn shadow() -> Retained<NSColor> {
-    rgb(0x0b0c16)
+    pick(0x0b0c16, 0x000000)
 }

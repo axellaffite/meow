@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cat_photo::CustomCoat;
 use crate::sprites::Coat;
+use crate::style::Style;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -15,6 +16,8 @@ pub struct Settings {
     pub custom_coats: Vec<CustomCoat>,
     /// Slack drafts follow the user's learned style guide.
     pub write_as_me: bool,
+    /// Pixel art or classic; read at launch.
+    pub style: Style,
 }
 
 impl Settings {

@@ -38,7 +38,7 @@ use meow::claude::ClaudeEnv;
 use meow::conversations::{ChatId, Conversation, Conversations};
 use meow::settings::Settings;
 use meow::source::Icons;
-use meow::sprites::{Facing, Look, render, render_prop};
+use meow::sprites::{Facing, Look};
 use meow::tasks::{self, TaskList};
 use meow::transcript::Transcript;
 use objc2::MainThreadMarker;
@@ -162,6 +162,13 @@ pub fn start(mtm: MainThreadMarker) {
     let controller = Controller::new(mtm);
     let (actions, actions_error) = load_actions();
     let (settings, settings_path, settings_error) = coat::load_settings();
+    // Before any window is built: every view reads it as it is made.
+    // `MEOW_STYLE` (pixel or classic) overrides it, to try one without saving it.
+    let style = std::env::var("MEOW_STYLE")
+        .ok()
+        .and_then(|name| serde_json::from_value(serde_json::Value::String(name)).ok())
+        .unwrap_or(settings.style);
+    meow::style::set(style);
     menus::install_main_menu(mtm, &controller);
     let (cat_menu, coat_menu) = menus::cat_menu(
         mtm,
@@ -448,9 +455,9 @@ impl App {
         let origin = NSPoint::new(self.cat.x, ground + self.cat.y);
         let look = self.show_news(look, origin, frame);
         if self.last_look != Some(look) {
-            let sprite = render(&look, self.settings.coat);
-            self.cat_overflow.view.show(sprite.clone());
-            self.cat_window.view.show(sprite);
+            let coat = self.settings.coat;
+            self.cat_overflow.view.show_look(look, coat);
+            self.cat_window.view.show_look(look, coat);
             self.last_look = Some(look);
         }
     }
@@ -498,9 +505,7 @@ impl App {
         match prop {
             Some(view) => {
                 self.prop_window.move_to(view.x as f64, ground);
-                self.prop_window
-                    .view
-                    .show(render_prop(view.prop, view.facing));
+                self.prop_window.view.show_prop(view.prop, view.facing);
                 if self.last_prop.is_none() {
                     self.prop_window.panel.orderFrontRegardless();
                     // The cat's head goes over the bowl's rim.
@@ -526,9 +531,7 @@ impl App {
                 }
                 self.hairball_window
                     .move_to(view.x as f64, self.hairball_ground);
-                self.hairball_window
-                    .view
-                    .show(render_prop(view.prop, view.facing));
+                self.hairball_window.view.show_prop(view.prop, view.facing);
                 if self.last_hairball.is_none() {
                     self.hairball_window.panel.orderFrontRegardless();
                     // The cat walks in front of it.
@@ -559,6 +562,7 @@ impl App {
             UiEvent::Drop => self.cat.release(),
             UiEvent::Stroke(distance) => self.cat.stroke(distance),
             UiEvent::SetCoat(index) => self.set_coat(index),
+            UiEvent::SetStyle(index) => self.set_style(index),
             UiEvent::AddCoatFromPhoto => self.add_coat_from_photo(),
             UiEvent::RemoveCoat => self.remove_coat(),
             UiEvent::Feed | UiEvent::ReleaseMouse => self.play(event),
