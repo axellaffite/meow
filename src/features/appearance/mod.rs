@@ -1,5 +1,5 @@
-//! How Meow looks, from the cat's menu › Theme: the coat the cat wears and
-//! the size the chat bubble opens at, kept across launches, and themes made
+//! How Meow looks, from the cat's menu › Theme: the coat the cat wears, the
+//! size the chat bubble opens at and the style, kept across launches, and themes made
 //! from a photo of the user's cat: the photo is shrunk in the background,
 //! then a run that may only read that copy reports its colors.
 
@@ -15,6 +15,8 @@ use meow::cat_photo::{self, CustomCoat};
 use meow::claude::{ClaudeEvent, Run};
 use meow::conversations::ChatId;
 use meow::sprites::Coat;
+use meow::style::{self, Style};
+use meow::update;
 use objc2::MainThreadMarker;
 
 use crate::app::feature::{Feature, Host};
@@ -26,6 +28,7 @@ use crate::ui::photo_picker;
 enum Msg {
     Wear(Coat),
     Resize(WindowSize),
+    Restyle(Style),
     AddFromPhoto,
     RemoveCustom,
 }
@@ -55,9 +58,12 @@ pub(crate) struct Theme {
 impl Theme {
     /// The saved appearance, or why it could not be read (then the defaults).
     pub(crate) fn from_settings(saved: Result<Appearance, String>) -> Self {
-        Self::new(saved, || {
+        let theme = Self::new(saved, || {
             MainThreadMarker::new().and_then(photo_picker::pick)
-        })
+        });
+        // Before any window is built: every view reads it as it is made.
+        style::set(theme.appearance.style);
+        theme
     }
 
     fn new(saved: Result<Appearance, String>, pick_photo: fn() -> Option<PathBuf>) -> Self {
@@ -86,6 +92,28 @@ impl Theme {
         if let Err(error) = host.settings().set(&self.appearance) {
             eprintln!("meow: {error}");
             host.error_in(&ChatId::Main, &error);
+        }
+    }
+
+    /// Saves the new style and relaunches, as windows take it when they are built.
+    fn restyle(&mut self, style: Style, host: &mut dyn Host) {
+        if style == self.appearance.style {
+            return;
+        }
+        self.apply(
+            Appearance {
+                style,
+                ..self.appearance.clone()
+            },
+            host,
+        );
+        let bundle = std::env::current_exe()
+            .ok()
+            .and_then(|exe| update::bundle_of(&exe));
+        match bundle.map(|bundle| update::relaunch(&bundle)) {
+            Some(Ok(())) => host.quit(),
+            Some(Err(error)) => host.error_in(&ChatId::Main, &error),
+            None => host.info_in(&ChatId::Main, "Restart Meow to see the new style."),
         }
     }
 
@@ -169,7 +197,8 @@ impl Theme {
 
     /// The Theme submenu's items: one per theme, the worn one checked, the
     /// built-in ones apart from the user's own, then adding one from a photo
-    /// and removing the worn one when it is the user's, then window sizes.
+    /// and removing the worn one when it is the user's, then window sizes
+    /// and styles.
     fn theme_entries(&self) -> Vec<MenuEntry> {
         let inbox = self.inbox.sender();
         let built_in = Coat::ALL.len();
@@ -203,6 +232,17 @@ impl Theme {
                 Msg::Resize(size),
             ));
         }
+        entries.push(MenuEntry::Separator);
+        entries.push(MenuEntry::Label("Style (relaunches Meow)".to_string()));
+        for style in Style::ALL {
+            let checked = style == self.appearance.style;
+            entries.push(action(
+                &inbox,
+                style.name().to_string(),
+                checked,
+                Msg::Restyle(style),
+            ));
+        }
         entries
     }
 }
@@ -233,6 +273,7 @@ impl Feature for Theme {
                         host,
                     );
                 }
+                Msg::Restyle(style) => self.restyle(style, host),
                 Msg::AddFromPhoto => self.add_from_photo(host),
                 Msg::RemoveCustom => self.apply(self.appearance.without_current_custom(), host),
             }

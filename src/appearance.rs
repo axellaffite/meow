@@ -1,11 +1,13 @@
 //! How Meow looks, picked from the cat's menu: the coat the cat wears (a
-//! built-in one or a theme from a photo of the user's cat) and the size the
-//! chat bubble opens at. Saved among the settings (see `settings::Store`).
+//! built-in one or a theme from a photo of the user's cat), the size the
+//! chat bubble opens at and the style. Saved among the settings (see
+//! `settings::Store`).
 
 use serde::{Deserialize, Serialize};
 
 use crate::cat_photo::CustomCoat;
 use crate::sprites::Coat;
+use crate::style::Style;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -15,6 +17,8 @@ pub struct Appearance {
     pub custom_coats: Vec<CustomCoat>,
     /// The chat bubble's size when it opens.
     pub window_size: WindowSize,
+    /// Pixel art or classic; read at launch.
+    pub style: Style,
 }
 
 /// How big the chat bubble opens; it can still be resized by hand.
@@ -172,6 +176,7 @@ mod tests {
         let appearance: Appearance = serde_json::from_str("{}").unwrap();
         assert_eq!(appearance.coat, Coat::Ginger);
         assert_eq!(appearance.window_size, WindowSize::Standard);
+        assert_eq!(appearance.style, Style::Pixel);
         let willow: Appearance = serde_json::from_str(r#"{"coat":"Willow"}"#).unwrap();
         assert_eq!(willow.coat, Coat::Willow);
     }

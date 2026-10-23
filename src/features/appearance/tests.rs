@@ -4,6 +4,7 @@ use meow::appearance::{Appearance, WindowSize};
 use meow::cat_photo::CustomCoat;
 use meow::conversations::ChatId;
 use meow::sprites::{Coat, Palette};
+use meow::style::Style;
 
 use super::Theme;
 use crate::app::feature::Feature;
@@ -54,7 +55,7 @@ fn the_first_poll_dresses_the_cat_and_sizes_the_bubble_as_saved() {
 }
 
 #[test]
-fn the_theme_menu_lists_coats_photo_themes_and_window_sizes() {
+fn the_theme_menu_lists_coats_photo_themes_window_sizes_and_styles() {
     let feature = theme(Appearance::default().with_custom(mochi()));
     assert_eq!(feature.menu_section(), MenuSection::Cat);
     assert_eq!(
@@ -76,6 +77,10 @@ fn the_theme_menu_lists_coats_photo_themes_and_window_sizes() {
             "  [x] action: Standard",
             "  action: Large",
             "  action: Extra Large",
+            "  ---",
+            "  label: Style (relaunches Meow)",
+            "  [x] action: Pixel Art",
+            "  action: Classic",
         ]
     );
 }
@@ -108,6 +113,25 @@ fn picking_a_window_size_resizes_the_bubble_and_saves_it() {
         host.settings.get::<Appearance>().unwrap().window_size,
         WindowSize::Huge
     );
+}
+
+#[test]
+fn picking_a_style_saves_it_and_asks_for_a_restart_outside_the_app() {
+    let mut feature = theme(Appearance::default());
+    let mut host = FakeHost::default();
+    feature.poll(&mut host);
+    click(&feature.menu(), &["Theme", "Classic"]);
+    feature.poll(&mut host);
+    assert_eq!(
+        host.settings.get::<Appearance>().unwrap().style,
+        Style::Classic
+    );
+    // A test binary is not in a bundle, so there is nothing to relaunch.
+    assert_eq!(
+        host.infos.last().map(|(_, text)| text.as_str()),
+        Some("Restart Meow to see the new style.")
+    );
+    assert!(!host.quit);
 }
 
 #[test]
