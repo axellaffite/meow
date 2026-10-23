@@ -1,5 +1,5 @@
 //! The app's look: pixel art (the default) or a classic one, with the system
-//! font, a sober palette, rounded shapes and a smooth vector cat.
+//! font, a sober palette, rounded shapes and a flat vector cat.
 //!
 //! Picked from the cat's menu and saved in the settings; it is read once at
 //! launch, before any window is built, so changing it relaunches the app.

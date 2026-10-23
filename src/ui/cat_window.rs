@@ -1,18 +1,23 @@
-//! Transparent, click-through-free panel that shows the cat sprite.
+//! Transparent, click-through-free panel that shows the cat sprite: pixel
+//! art, or in the Classic style the flat vector cat.
 
 use std::cell::{Cell, RefCell};
 
-use meow::sprites::{CANVAS_H, CANVAS_W, Frame, PROP_H, PROP_W, SCRUFF};
+use meow::sprites::{
+    self, CANVAS_H, CANVAS_W, Coat, Facing, Frame, Look, PROP_H, PROP_W, Prop, SCRUFF,
+};
+use meow::vector_cat;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{
     AllocAnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
 };
 use objc2_app_kit::{
-    NSBackingStoreType, NSBezierPath, NSColor, NSCursor, NSEvent, NSMenu, NSPanel,
-    NSStatusWindowLevel, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindowCollectionBehavior,
-    NSWindowStyleMask,
+    NSBackingStoreType, NSBezierPath, NSColor, NSCursor, NSEvent, NSGraphicsContext, NSMenu,
+    NSPanel, NSStatusWindowLevel, NSTrackingArea, NSTrackingAreaOptions, NSView,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
+use objc2_core_graphics::CGContext;
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 use super::events::{UiEvent, push};
@@ -32,9 +37,17 @@ struct Press {
     dragging: bool,
 }
 
+/// What a Classic style view draws as vectors, in place of a pixel frame.
+#[derive(Clone, Copy)]
+enum Vector {
+    Cat(Look, Coat),
+    Prop(Prop, Facing),
+}
+
 #[derive(Default)]
 pub struct CatViewIvars {
     frame: RefCell<Option<Frame>>,
+    vector: Cell<Option<Vector>>,
     press: Cell<Option<Press>>,
     /// Last mouse position over the cat, to measure strokes.
     hover: Cell<Option<NSPoint>>,
@@ -143,7 +156,10 @@ define_class!(
 
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: NSRect) {
-            self.draw_pixels();
+            match self.ivars().vector.get() {
+                Some(vector) => self.draw_vector(vector),
+                None => self.draw_pixels(),
+            }
         }
     }
 );
@@ -175,7 +191,33 @@ impl CatView {
     }
 
     pub fn show(&self, frame: Frame) {
+        self.ivars().vector.set(None);
         self.ivars().frame.replace(Some(frame));
+        self.setNeedsDisplay(true);
+    }
+
+    /// Shows the cat in `look` and `coat`: the pixel sprite, or the flat
+    /// vector cat in the Classic style.
+    pub fn show_look(&self, look: Look, coat: Coat) {
+        if meow::style::is_classic() {
+            self.show_vector(Vector::Cat(look, coat));
+        } else {
+            self.show(sprites::render(&look, coat));
+        }
+    }
+
+    /// Shows `prop` as `show_look` shows the cat.
+    pub fn show_prop(&self, prop: Prop, facing: Facing) {
+        if meow::style::is_classic() {
+            self.show_vector(Vector::Prop(prop, facing));
+        } else {
+            self.show(sprites::render_prop(prop, facing));
+        }
+    }
+
+    fn show_vector(&self, vector: Vector) {
+        self.ivars().vector.set(Some(vector));
+        self.ivars().frame.replace(None);
         self.setNeedsDisplay(true);
     }
 
@@ -183,6 +225,25 @@ impl CatView {
         if self.ivars().shift.replace(shift) != shift {
             self.setNeedsDisplay(true);
         }
+    }
+
+    fn draw_vector(&self, vector: Vector) {
+        let Some(context) = NSGraphicsContext::currentContext() else {
+            return;
+        };
+        let ctx = context.CGContext();
+        let c = Some(&*ctx);
+        // The view is flipped, so the context is already y down, as the
+        // drawing expects; it only needs moving by the shift and scaling.
+        let (dx, dy) = self.ivars().shift.get();
+        CGContext::save_g_state(c);
+        CGContext::translate_ctm(c, dx, -dy);
+        CGContext::scale_ctm(c, SCALE, SCALE);
+        match vector {
+            Vector::Cat(look, coat) => vector_cat::draw_look(&ctx, &look, coat),
+            Vector::Prop(prop, facing) => vector_cat::draw_prop(&ctx, prop, facing),
+        }
+        CGContext::restore_g_state(c);
     }
 
     fn draw_pixels(&self) {

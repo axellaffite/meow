@@ -38,7 +38,7 @@ use meow::claude::ClaudeEnv;
 use meow::conversations::{ChatId, Conversation, Conversations};
 use meow::settings::Settings;
 use meow::source::Icons;
-use meow::sprites::{Facing, Look, render, render_prop};
+use meow::sprites::{Facing, Look};
 use meow::tasks::{self, TaskList};
 use meow::transcript::Transcript;
 use objc2::MainThreadMarker;
@@ -455,9 +455,9 @@ impl App {
         let origin = NSPoint::new(self.cat.x, ground + self.cat.y);
         let look = self.show_news(look, origin, frame);
         if self.last_look != Some(look) {
-            let sprite = render(&look, self.settings.coat);
-            self.cat_overflow.view.show(sprite.clone());
-            self.cat_window.view.show(sprite);
+            let coat = self.settings.coat;
+            self.cat_overflow.view.show_look(look, coat);
+            self.cat_window.view.show_look(look, coat);
             self.last_look = Some(look);
         }
     }
@@ -505,9 +505,7 @@ impl App {
         match prop {
             Some(view) => {
                 self.prop_window.move_to(view.x as f64, ground);
-                self.prop_window
-                    .view
-                    .show(render_prop(view.prop, view.facing));
+                self.prop_window.view.show_prop(view.prop, view.facing);
                 if self.last_prop.is_none() {
                     self.prop_window.panel.orderFrontRegardless();
                     // The cat's head goes over the bowl's rim.
@@ -533,9 +531,7 @@ impl App {
                 }
                 self.hairball_window
                     .move_to(view.x as f64, self.hairball_ground);
-                self.hairball_window
-                    .view
-                    .show(render_prop(view.prop, view.facing));
+                self.hairball_window.view.show_prop(view.prop, view.facing);
                 if self.last_hairball.is_none() {
                     self.hairball_window.panel.orderFrontRegardless();
                     // The cat walks in front of it.
