@@ -294,6 +294,44 @@ define_class!(
             }
         }
 
+        #[unsafe(method(showAutopilot:))]
+        fn show_autopilot(&self, _sender: Option<&AnyObject>) {
+            push(UiEvent::ShowAutopilot);
+        }
+
+        #[unsafe(method(toggleAutopilot:))]
+        fn toggle_autopilot(&self, _sender: Option<&AnyObject>) {
+            push(UiEvent::ToggleAutopilot);
+        }
+
+        #[unsafe(method(approveAutopilot:))]
+        fn approve_autopilot(&self, sender: Option<&AnyObject>) {
+            if let Some(tag) = sender_tag(sender) {
+                push(UiEvent::ApproveAutopilot(tag));
+            }
+        }
+
+        #[unsafe(method(rejectAutopilot:))]
+        fn reject_autopilot(&self, sender: Option<&AnyObject>) {
+            if let Some(tag) = sender_tag(sender) {
+                push(UiEvent::RejectAutopilot(tag));
+            }
+        }
+
+        #[unsafe(method(dismissAutopilot:))]
+        fn dismiss_autopilot(&self, sender: Option<&AnyObject>) {
+            if let Some(row) = sender_tag(sender) {
+                push(UiEvent::DismissAutopilot(row));
+            }
+        }
+
+        #[unsafe(method(openAutopilotFolder:))]
+        fn open_autopilot_folder(&self, sender: Option<&AnyObject>) {
+            if let Some(row) = sender_tag(sender) {
+                push(UiEvent::OpenAutopilotFolder(row));
+            }
+        }
+
         #[unsafe(method(acceptPlanEvent:))]
         fn accept_plan_event(&self, sender: Option<&AnyObject>) {
             if let Some(index) = sender_tag(sender) {

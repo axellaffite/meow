@@ -3,6 +3,7 @@
 mod activity;
 mod agenda;
 mod agents;
+mod autopilot;
 mod coat;
 mod downloads;
 mod plan;
@@ -143,6 +144,8 @@ struct App {
     routines: routines::RoutineState,
     /// Coding agents started in Superset from the chat or Slack.
     agents: agents::AgentsState,
+    /// Work started from Slack messages, waiting for approval.
+    autopilot: autopilot::AutopilotState,
     /// Updates from the GitHub releases, for release builds.
     update: update::UpdateState,
     /// A reply arrived out of sight; the cat shows `!` until it is seen.
@@ -192,11 +195,14 @@ pub fn start(mtm: MainThreadMarker) {
     let (activity_state, activity_error) = activity::ActivityState::load();
     let (routine_state, routines_error) = routines::RoutineState::load();
     chat.render_routines(&routine_state.routines, None, now_secs());
+    let (autopilot_state, autopilot_error) = autopilot::AutopilotState::load();
+    chat.render_autopilot(&autopilot_state.jobs, settings.autopilot, now_secs());
     chat.render_activity(&activity_state.log, now_secs());
     crate::ui::notify::request_permission();
     let startup_errors = [
         &activity_error,
         &routines_error,
+        &autopilot_error,
         &fonts_error,
         &actions_error,
         &hotkey_error,
@@ -278,6 +284,7 @@ pub fn start(mtm: MainThreadMarker) {
         activity: activity_state,
         routines: routine_state,
         agents: agents::AgentsState::default(),
+        autopilot: autopilot_state,
         update: update::UpdateState::from_env(),
         snapshot: snapshot::Snapshot::from_env(),
         _hotkeys: hotkeys,
@@ -403,6 +410,7 @@ impl App {
         self.poll_cat_photo();
         self.poll_routines();
         self.poll_agents();
+        self.poll_autopilot();
         self.poll_snapshot();
         self.poll_update();
         self.animate(dt);
@@ -598,6 +606,12 @@ impl App {
             UiEvent::ClearActivity => self.clear_activity(),
             UiEvent::ShowRoutines => self.show_routines(),
             UiEvent::DeleteRoutine(row) => self.delete_routine(row),
+            UiEvent::ShowAutopilot => self.show_autopilot(),
+            UiEvent::ToggleAutopilot => self.toggle_autopilot(),
+            UiEvent::ApproveAutopilot(tag) => self.decide_autopilot(tag, true),
+            UiEvent::RejectAutopilot(tag) => self.decide_autopilot(tag, false),
+            UiEvent::DismissAutopilot(row) => self.dismiss_autopilot(row),
+            UiEvent::OpenAutopilotFolder(row) => self.open_autopilot_folder(row),
             UiEvent::SignInSlack => self.sign_in_slack(),
             UiEvent::OpenSlackConversation(row) => self.open_slack_conversation(row),
             UiEvent::OpenSlackThread(index) => self.open_slack_thread(index),

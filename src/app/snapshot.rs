@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use meow::autopilot::{self, Jobs, Plan};
+use meow::guard::Call;
 use meow::sprites::{self, Bubble, Facing, Look, Pose};
 use meow::transcript::Transcript;
 
@@ -21,16 +23,17 @@ use crate::ui::slack_assist::AssistView;
 use crate::ui::slack_page::{ConversationRow, TranscriptItem};
 use crate::ui::widgets;
 
-use super::App;
+use super::{App, now_secs};
 
 /// The pages, in order; each is saved once it has settled.
-const STEPS: [&str; 11] = [
+const STEPS: [&str; 12] = [
     "chat",
     "chat-two-lines",
     "chat-long",
     "tasks",
     "tasks-reply",
     "plan",
+    "autopilot",
     "slack-list",
     "slack-conversation",
     "slack-focus",
@@ -113,6 +116,10 @@ impl App {
                 }
             }
             "plan" => self.handle(UiEvent::QuickAction(0)),
+            "autopilot" => {
+                self.handle(UiEvent::ShowAutopilot);
+                self.chat.render_autopilot(&sample_jobs(), true, now_secs());
+            }
             "slack-list" => {
                 self.handle(UiEvent::ShowSlack);
                 self.chat.slack().render_list(&sample_rows());
@@ -170,6 +177,66 @@ impl App {
             Err(error) => eprintln!("meow: snapshot {name}: {error}"),
         }
     }
+}
+
+/// A job waiting for approval of a push and a reply, and one at work.
+fn sample_jobs() -> Jobs {
+    let mut jobs = Jobs::default();
+    let origin = |ts: &str, text: &str| autopilot::Origin {
+        channel: "D1".into(),
+        ts: ts.into(),
+        thread_ts: None,
+        from: "Axel".into(),
+        text: text.into(),
+    };
+    let plan = |title: &str| Plan {
+        title: title.into(),
+        prompt: String::new(),
+        repo: None,
+        pr: None,
+        branch: None,
+    };
+    let now = now_secs();
+    jobs.add(
+        plan("Fix the conflicts on PR #42"),
+        origin(
+            "1",
+            "Ta PR #42 a des conflits avec main, tu peux regarder ?",
+        ),
+        now,
+    );
+    jobs.finish(
+        1,
+        Ok("Merged `main` into `feat/window-size`: two conflicts in `src/ui/chat_window.rs`, \
+            kept both sizes. `cargo test` passes. The push and a reply to Axel wait for you."
+            .into()),
+        vec![
+            Call {
+                tool: "Bash".into(),
+                input: serde_json::json!({
+                    "command": "git push fork HEAD:feat/window-size",
+                    "description": "Push the merge to the PR branch",
+                }),
+            },
+            Call {
+                tool: "mcp__claude_ai_Slack__slack_send_message".into(),
+                input: serde_json::json!({
+                    "channel_id": "D1",
+                    "message": "C'est réglé, j'ai mergé main et poussé, tu peux relancer la review.",
+                }),
+            },
+        ],
+        now,
+    );
+    jobs.add(
+        plan("Find why the Android build fails"),
+        origin("2", "Le build Android est rouge depuis ce matin"),
+        now,
+    );
+    if let Some(job) = jobs.get_mut(2) {
+        job.stage = autopilot::Stage::Working;
+    }
+    jobs
 }
 
 fn sample_rows() -> Vec<ConversationRow> {

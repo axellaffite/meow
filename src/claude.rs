@@ -1,6 +1,7 @@
 //! Runs requests through the `claude` CLI in print mode, so they use the
 //! regular Claude subscription rather than API billing.
 
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -13,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::context;
+use crate::{context, guard};
 
 const PERMISSION_MODE: &str = "auto";
 /// Haiku (always its latest version): cheap and quick, and enough for fetching
@@ -280,6 +281,7 @@ impl Run {
             &env.model,
             PERMISSION_MODE,
             &as_strs(&args),
+            &[],
         )
     }
 
@@ -291,14 +293,22 @@ impl Run {
 
     /// [`Run::start_offline`] on a chosen `model`.
     pub fn start_offline_on(env: &ClaudeEnv, prompt: &str, model: &str) -> Result<Self, String> {
-        Self::spawn(env, prompt, None, model, PERMISSION_MODE, OFFLINE_ARGS)
+        Self::spawn(env, prompt, None, model, PERMISSION_MODE, OFFLINE_ARGS, &[])
     }
 
     /// A one-off call with the user's tools, skills and connectors, read-only:
     /// Claude can look things up but not change or send anything.
     pub fn start_read_only(env: &ClaudeEnv, prompt: &str, model: &str) -> Result<Self, String> {
         let args = app_context_args(env);
-        Self::spawn(env, prompt, None, model, READ_ONLY_MODE, &as_strs(&args))
+        Self::spawn(
+            env,
+            prompt,
+            None,
+            model,
+            READ_ONLY_MODE,
+            &as_strs(&args),
+            &[],
+        )
     }
 
     /// [`Run::start`], read-only: a chat message that may look things up but
@@ -316,6 +326,7 @@ impl Run {
             &env.model,
             READ_ONLY_MODE,
             &as_strs(&args),
+            &[],
         )
     }
 
@@ -329,7 +340,7 @@ impl Run {
     ) -> Result<Self, String> {
         let allowed = allowed.join(",");
         let args = ["--tools", "", "--allowedTools", allowed.as_str()];
-        Self::spawn(env, prompt, None, model, ONLY_ALLOWED_MODE, &args)
+        Self::spawn(env, prompt, None, model, ONLY_ALLOWED_MODE, &args, &[])
     }
 
     /// A one-off call whose only tool is reading files under `dir` (e.g. to
@@ -348,7 +359,43 @@ impl Run {
             allowed.as_str(),
             "--strict-mcp-config",
         ];
-        Self::spawn(env, prompt, None, model, ONLY_ALLOWED_MODE, &args)
+        Self::spawn(env, prompt, None, model, ONLY_ALLOWED_MODE, &args, &[])
+    }
+
+    /// An autopilot run in `cwd`: the chat's tools and connectors, with every
+    /// call going through Meow's guard ([`crate::guard`]), which records the
+    /// ones that cannot be undone in `held` instead of making them, and lets
+    /// through the single call written in `approved`, if any.
+    pub fn start_guarded(
+        env: &ClaudeEnv,
+        prompt: &str,
+        session: Option<&str>,
+        model: &str,
+        cwd: &Path,
+        held: &Path,
+        approved: Option<&Path>,
+    ) -> Result<Self, String> {
+        let bin = env
+            .meow_bin
+            .as_deref()
+            .ok_or("Meow could not find its own binary, which guards autopilot runs.")?;
+        let mut args = app_context_args(env);
+        args.extend(["--settings".to_string(), guard::settings(bin)]);
+        let env = ClaudeEnv {
+            cwd: cwd.to_path_buf(),
+            ..env.clone()
+        };
+        let mut vars = vec![(guard::HELD_VAR, held.as_os_str())];
+        vars.extend(approved.map(|path| (guard::APPROVED_VAR, path.as_os_str())));
+        Self::spawn(
+            &env,
+            prompt,
+            session,
+            model,
+            PERMISSION_MODE,
+            &as_strs(&args),
+            &vars,
+        )
     }
 
     fn spawn(
@@ -358,6 +405,7 @@ impl Run {
         model: &str,
         permission_mode: &str,
         extra_args: &[&str],
+        vars: &[(&str, &OsStr)],
     ) -> Result<Self, String> {
         let mut command = Command::new(&env.binary);
         command
@@ -386,7 +434,7 @@ impl Run {
         if let Some(id) = session {
             command.args(["--resume", id]);
         }
-        command.args(extra_args);
+        command.args(extra_args).envs(vars.iter().copied());
 
         let child = command
             .spawn()
