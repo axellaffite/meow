@@ -5,6 +5,7 @@ use std::cell::Cell;
 
 use meow::actions::QuickAction;
 use meow::sprites::{self, Bubble, Coat, Facing, Look, Pose};
+use meow::vector_cat;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{AllocAnyThread, MainThreadMarker, MainThreadOnly, sel};
@@ -12,6 +13,7 @@ use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBezierPath, NSButton, NSColor, NSFont, NSImage, NSImageView,
     NSTextAlignment, NSTextField,
 };
+use objc2_core_graphics::CGContext;
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use super::action::Action;
@@ -284,7 +286,12 @@ impl Sidebar {
             bubble: Bubble::None,
             facing: Facing::Right,
         };
-        if let Some(image) = sprite_image(&sprites::render(&look, coat), ICON_HEIGHT) {
+        let image = if meow::style::is_classic() {
+            vector_image(&look, coat, ICON_HEIGHT)
+        } else {
+            sprite_image(&sprites::render(&look, coat), ICON_HEIGHT)
+        };
+        if let Some(image) = image {
             self.icon.setImage(Some(&image));
         }
     }
@@ -422,6 +429,26 @@ fn feature_button(mtm: MainThreadMarker, spec: PageSpec) -> (Retained<NSButton>,
     let action = Action::new(mtm, move || events::push(UiEvent::ShowPage(page)));
     let button = borderless_button(mtm, &action, Action::selector(), 0.0, NAV_HEIGHT);
     (button, action)
+}
+
+/// The flat cat of the Classic style, without the bubble space above it,
+/// `height` points tall and drawn sharp on Retina screens.
+fn vector_image(look: &Look, coat: Coat, height: f64) -> Option<Retained<NSImage>> {
+    let rows = (sprites::CANVAS_H - sprites::BUBBLE_H) as f64;
+    let width = height * sprites::CANVAS_W as f64 / rows;
+    let scale = 2.0 * height / rows;
+    let pixels = |points: f64| (2.0 * points).round() as usize;
+    let bitmap = vector_cat::Bitmap::new(pixels(width), pixels(height))?;
+    bitmap.draw(scale, |ctx| {
+        CGContext::translate_ctm(Some(ctx), 0.0, -(sprites::BUBBLE_H as f64));
+        vector_cat::draw_look(ctx, look, coat);
+    });
+    let image = bitmap.image()?;
+    Some(NSImage::initWithCGImage_size(
+        NSImage::alloc(),
+        &image,
+        NSSize::new(width, height),
+    ))
 }
 
 fn borderless_button(

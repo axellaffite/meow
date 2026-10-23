@@ -132,7 +132,7 @@ impl Coat {
         }
     }
 
-    fn palette(&self) -> &Palette {
+    pub(crate) fn palette(&self) -> &Palette {
         match self {
             Coat::Ginger => &GINGER,
             Coat::Willow => &WILLOW,
@@ -157,7 +157,7 @@ impl Coat {
     }
 
     /// The color of a sprite cell; `None` for anything else (transparent).
-    pub(super) fn color(self, c: char) -> Option<Rgb> {
+    pub(crate) fn color(self, c: char) -> Option<Rgb> {
         let palette = self.palette();
         match c {
             'k' => Some(OUTLINE),

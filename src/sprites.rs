@@ -27,23 +27,23 @@ pub const BUBBLE_H: usize = 8;
 pub const CAT_H: usize = 14;
 pub const CANVAS_H: usize = BUBBLE_H + CAT_H;
 
-const BUBBLE_X: usize = 14;
+pub(crate) const BUBBLE_X: usize = 14;
 /// Canvas column of the bubble's tail, just above the head of a cat facing right.
 pub const BUBBLE_TAIL_X: usize = BUBBLE_X + 2;
 const HEART: [&str; 4] = [".r.r.", "rrrrr", ".rrr.", "..r.."];
 /// Left column of each rising heart, above the cat's head and back.
-const HEART_LANES: [isize; 3] = [7, 12, 17];
-const HEART_STAGGER: usize = 4;
+pub(crate) const HEART_LANES: [isize; 3] = [7, 12, 17];
+pub(crate) const HEART_STAGGER: usize = 4;
 /// Frames for a heart to rise from below the space to above it.
-const HEART_CYCLE: usize = BUBBLE_H + 4;
+pub(crate) const HEART_CYCLE: usize = BUBBLE_H + 4;
 /// The sleeping cat lies lower than the standing one; this is its top row.
-const SLEEP_TOP: usize = BUBBLE_H + 3;
+pub(crate) const SLEEP_TOP: usize = BUBBLE_H + 3;
 const Z: [&str; 5] = ["kkk", "..k", ".k.", "k..", "kkk"];
 /// Left column of a z as it appears, between the sleeping cat's ears.
-const Z_X: isize = 17;
+pub(crate) const Z_X: isize = 17;
 /// Frames for a z to float from just above the sleeping cat's head out
 /// through the top, plus one gone so the two z's never touch.
-const Z_CYCLE: usize = SLEEP_TOP + 1;
+pub(crate) const Z_CYCLE: usize = SLEEP_TOP + 1;
 const LEG_XS: [usize; 4] = [3, 6, 14, 17];
 const LEG_ROW: usize = 10;
 const FALL_STRIDES: [isize; 4] = [-1, -1, 1, 1];
