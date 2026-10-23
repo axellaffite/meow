@@ -362,6 +362,29 @@ pub fn done_reply_prompt() -> String {
     )
 }
 
+/// At most this many done tasks are listed to a quick action, so it does not
+/// bring them back.
+pub const MAX_HANDLED: usize = 40;
+
+/// Tells a quick action which tasks I have dealt with, so it leaves them out;
+/// empty when there are none.
+pub fn handled_instruction(handled: &[&Task]) -> String {
+    if handled.is_empty() {
+        return String::new();
+    }
+    let handled: Vec<_> = handled
+        .iter()
+        .take(MAX_HANDLED)
+        .map(|t| serde_json::json!({"title": t.title, "source": t.source, "url": t.url}))
+        .collect();
+    format!(
+        "I have already dealt with these, ticked off in my task list: leave them out of your \
+         answer, including the same message, issue or pull request under another title or \
+         link, unless something new happened since (JSON):\n{}",
+        serde_json::Value::Array(handled)
+    )
+}
+
 /// Asks Claude to report the actionable items of its answer as tasks.
 pub fn report_instruction() -> String {
     format!(

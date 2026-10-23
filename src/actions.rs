@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::schedule::DailyTime;
+use crate::tasks::Task;
 
 const MAX_ACTIONS: usize = 12;
 
@@ -33,14 +34,20 @@ pub struct QuickAction {
 }
 
 impl QuickAction {
-    /// The prompt sent to Claude: the action's own text, plus the request to
-    /// report actionable items, as tasks or as a day plan whose items become tasks.
-    pub fn full_prompt(&self, now: u64) -> String {
+    /// The prompt sent to Claude: the action's own text, the tasks I have
+    /// already dealt with, and the request to report actionable items, as
+    /// tasks or as a day plan whose items become tasks.
+    pub fn full_prompt(&self, now: u64, handled: &[&Task]) -> String {
         let report = match self.layout {
             Layout::Text => crate::tasks::report_instruction(),
             Layout::Plan => crate::plan::instruction(now),
         };
-        format!("{}\n\n{report}", self.prompt)
+        let handled = crate::tasks::handled_instruction(handled);
+        if handled.is_empty() {
+            format!("{}\n\n{report}", self.prompt)
+        } else {
+            format!("{}\n\n{handled}\n\n{report}", self.prompt)
+        }
     }
 
     fn new(title: &str, prompt: &str) -> Self {
@@ -232,8 +239,25 @@ mod tests {
     #[test]
     fn every_action_asks_claude_to_report_tasks() {
         let custom = QuickAction::new("Inbox", "Summarize my inbox");
-        assert!(custom.full_prompt(0).starts_with("Summarize my inbox"));
-        assert!(custom.full_prompt(0).contains(crate::tasks::TASKS_FENCE));
+        assert!(custom.full_prompt(0, &[]).starts_with("Summarize my inbox"));
+        assert!(
+            custom
+                .full_prompt(0, &[])
+                .contains(crate::tasks::TASKS_FENCE)
+        );
+    }
+
+    #[test]
+    fn actions_leave_out_tasks_already_dealt_with() {
+        let mut list = crate::tasks::TaskList::default();
+        list.add_manual("Reply to Marine", 0);
+        let id = list.display()[0].id.clone();
+        list.set_done(&id, true, 1);
+        let action = QuickAction::new("Inbox", "Summarize my inbox");
+        let prompt = action.full_prompt(0, &list.recently_done(crate::tasks::MAX_HANDLED));
+        assert!(prompt.contains("already dealt with"));
+        assert!(prompt.contains("Reply to Marine"));
+        assert!(!action.full_prompt(0, &[]).contains("already dealt with"));
     }
 
     #[test]
@@ -241,7 +265,7 @@ mod tests {
         let morning = &defaults()[0];
         assert_eq!(morning.layout, Layout::Plan);
         assert_eq!(morning.daily_at, Some(DailyTime::new(7, 0)));
-        let prompt = morning.full_prompt(0);
+        let prompt = morning.full_prompt(0, &[]);
         assert!(prompt.contains(crate::plan::PLAN_FENCE));
         assert!(!prompt.contains(crate::tasks::TASKS_FENCE));
         assert_eq!(defaults()[1].daily_at, None);
