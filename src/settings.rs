@@ -17,6 +17,8 @@ pub struct Settings {
     pub write_as_me: bool,
     /// The chat bubble's size when it opens.
     pub window_size: WindowSize,
+    /// Slack messages asking the user for something start autopilot work.
+    pub autopilot: bool,
 }
 
 /// How big the chat bubble opens; it can still be resized by hand.

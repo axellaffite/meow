@@ -311,7 +311,17 @@ impl SlackState {
         self.open.as_deref()
     }
 
-    fn name_of(&self, id: Option<&str>) -> String {
+    /// The saved messages of `channel`, oldest first.
+    pub(super) fn history(&self, channel: &str) -> &[Message] {
+        self.cache.history(channel)
+    }
+
+    /// `message` as text, for Claude.
+    pub(super) fn text_of(&self, message: &Message) -> String {
+        message_body(message, &self.names, Shown::Text)
+    }
+
+    pub(super) fn name_of(&self, id: Option<&str>) -> String {
         id.and_then(|id| self.names.users.get(id).cloned())
             .or_else(|| id.map(str::to_string))
             .unwrap_or_else(|| "someone".to_string())
@@ -659,9 +669,6 @@ impl App {
             .filter(|m| is_for_me(conversation.kind, &m.text, me))
             .collect();
         let Some(last) = for_me.last() else { return };
-        if watching {
-            return;
-        }
         let sender = self.slack.name_of(last.user.as_deref());
         let place = channel_title(conversation, &self.slack.names);
         let mut title = if conversation.kind == ChannelKind::Im {
@@ -669,10 +676,16 @@ impl App {
         } else {
             format!("{sender} in {place}")
         };
+        // Even when reading it: preparing the work is what saves time.
+        let last = (*last).clone();
+        self.consider_for_autopilot(channel, &last, &title);
+        if watching {
+            return;
+        }
         if for_me.len() > 1 {
             title.push_str(&format!(" ({} messages)", for_me.len()));
         }
-        let detail = message_body(last, &self.slack.names, Shown::Text);
+        let detail = message_body(&last, &self.slack.names, Shown::Text);
         // One item per sender and conversation: their last message replaces the earlier ones.
         let key = format!(
             "slack:{channel}:{}",

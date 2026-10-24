@@ -80,6 +80,17 @@ pub enum UiEvent {
     ShowRoutines,
     /// Delete the scheduled task in this row.
     DeleteRoutine(usize),
+    /// Open the Autopilot page.
+    ShowAutopilot,
+    /// Turn Autopilot on or off.
+    ToggleAutopilot,
+    /// Approve or reject a held action: job row × `TAG_STRIDE` + action index.
+    ApproveAutopilot(usize),
+    RejectAutopilot(usize),
+    /// Remove the job in this row.
+    DismissAutopilot(usize),
+    /// Show the worktree of the job in this row.
+    OpenAutopilotFolder(usize),
     /// Open the Slack page.
     ShowSlack,
     /// Start the Slack sign-in flow.

@@ -120,6 +120,7 @@ impl App {
                 }
             }
             Link::Tasks => self.chat.show_page(Page::Tasks),
+            Link::Autopilot => self.show_autopilot(),
             Link::Url { url } => open_url(&url),
         }
     }
@@ -196,5 +197,6 @@ fn kind_name(kind: Kind) -> &'static str {
         Kind::Calendar => "Calendar",
         Kind::Tasks => "Tasks",
         Kind::Scheduled => "Scheduled",
+        Kind::Autopilot => "Autopilot",
     }
 }

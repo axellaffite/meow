@@ -5,6 +5,7 @@ use std::cell::{Cell, RefCell};
 
 use meow::actions::QuickAction;
 use meow::activity::ActivityLog;
+use meow::autopilot::Jobs;
 use meow::routines::Routines;
 use meow::tasks::TaskList;
 use objc2::rc::Retained;
@@ -18,6 +19,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
 use super::activity_page::ActivityPage;
+use super::autopilot_page::AutopilotPage;
 use super::bubble::{self, BubblePanel, BubbleView};
 use super::chat_page::ChatPage;
 use super::controller::Controller;
@@ -53,6 +55,7 @@ pub struct ChatWindow {
     slack: SlackPage,
     activity: ActivityPage,
     routines: RoutinesPage,
+    autopilot: AutopilotPage,
     page: Cell<Page>,
     /// Top line of the page: "Chat", "Tasks", or the task being discussed.
     header: Retained<NSTextField>,
@@ -103,12 +106,14 @@ impl ChatWindow {
         let slack = SlackPage::new(mtm, controller, page_frame);
         let activity = ActivityPage::new(mtm, controller, page_frame);
         let routines = RoutinesPage::new(mtm, controller, page_frame);
+        let autopilot = AutopilotPage::new(mtm, controller, page_frame);
         bubble.addSubview(&chat.view);
         bubble.addSubview(&tasks.view);
         bubble.addSubview(&plan.view);
         bubble.addSubview(&slack.view);
         bubble.addSubview(&activity.view);
         bubble.addSubview(&routines.view);
+        bubble.addSubview(&autopilot.view);
         bubble.addSubview(&close_button(mtm, controller, inner));
         let header = NSTextField::labelWithString(&NSString::from_str(""), mtm);
         header.setFrame(rect(
@@ -161,6 +166,7 @@ impl ChatWindow {
             slack,
             activity,
             routines,
+            autopilot,
             page: Cell::new(Page::Chat),
             header,
             subtitle,
@@ -205,6 +211,16 @@ impl ChatWindow {
         self.sidebar.set_active_routines(routines.active_count());
     }
 
+    pub fn autopilot(&self) -> &AutopilotPage {
+        &self.autopilot
+    }
+
+    /// Redraws the Autopilot page and the count of jobs waiting in the sidebar.
+    pub fn render_autopilot(&self, jobs: &Jobs, enabled: bool, now: u64) {
+        self.autopilot.render(jobs, enabled, now);
+        self.sidebar.set_waiting_jobs(jobs.waiting_count());
+    }
+
     pub fn set_unread_activity(&self, count: usize) {
         self.sidebar.set_unread_activity(count);
     }
@@ -241,6 +257,7 @@ impl ChatWindow {
         self.slack.view.setHidden(page != Page::Slack);
         self.activity.view.setHidden(page != Page::Activity);
         self.routines.view.setHidden(page != Page::Routines);
+        self.autopilot.view.setHidden(page != Page::Autopilot);
         self.refresh_header();
         self.focus();
     }
@@ -259,6 +276,7 @@ impl ChatWindow {
             Page::Slack => ("Slack".to_string(), Selection::Slack, false),
             Page::Activity => ("Activity".to_string(), Selection::Activity, false),
             Page::Routines => ("Scheduled".to_string(), Selection::Routines, false),
+            Page::Autopilot => ("Autopilot".to_string(), Selection::Autopilot, false),
         };
         self.sidebar.select(selection);
         self.run_button.setHidden(!can_run);
@@ -335,7 +353,7 @@ impl ChatWindow {
             Page::Plan => self.plan.focus(&self.panel),
             Page::Slack => self.slack.focus(&self.panel),
             // Nothing to type into: the bubble itself keeps the focus.
-            Page::Activity | Page::Routines => {}
+            Page::Activity | Page::Routines | Page::Autopilot => {}
         }
     }
 

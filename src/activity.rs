@@ -21,6 +21,8 @@ pub enum Kind {
     Tasks,
     /// A scheduled task ran, or a watch fired.
     Scheduled,
+    /// Autopilot work finished, or waits for approval.
+    Autopilot,
 }
 
 impl Kind {
@@ -31,6 +33,7 @@ impl Kind {
             Self::Calendar => "CALENDAR",
             Self::Tasks => "TASKS",
             Self::Scheduled => "SCHEDULED",
+            Self::Autopilot => "AUTOPILOT",
         }
     }
 
@@ -41,6 +44,7 @@ impl Kind {
             Self::Calendar => vec![Source::Calendar],
             Self::Tasks => vec![Source::Other],
             Self::Scheduled => vec![Source::Scheduled],
+            Self::Autopilot => vec![Source::Slack],
         }
     }
 }
@@ -64,6 +68,7 @@ pub enum Link {
         action: String,
     },
     Tasks,
+    Autopilot,
     Url {
         url: String,
     },

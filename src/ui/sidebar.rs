@@ -51,6 +51,8 @@ pub enum Page {
     Activity,
     /// Scheduled tasks and watches.
     Routines,
+    /// Work started from Slack messages, and what waits for approval.
+    Autopilot,
 }
 
 /// What the sidebar highlights: a page, or the quick action shown on the chat page.
@@ -61,6 +63,7 @@ pub enum Selection {
     Slack,
     Activity,
     Routines,
+    Autopilot,
     Action(usize),
 }
 
@@ -74,16 +77,20 @@ pub struct Sidebar {
     activity_badge: Retained<NSTextField>,
     /// The active scheduled task count, a blue chip at the end of the Scheduled row.
     routines_badge: Retained<NSTextField>,
+    /// The jobs waiting for approval, an orange chip at the end of the Autopilot row.
+    autopilot_badge: Retained<NSTextField>,
     chat: Retained<NSButton>,
     tasks: Retained<NSButton>,
     slack: Retained<NSButton>,
     activity: Retained<NSButton>,
     routines: Retained<NSButton>,
+    autopilot: Retained<NSButton>,
     actions: Vec<(Retained<NSButton>, String)>,
     selected: Cell<Selection>,
     open_tasks: Cell<usize>,
     unread_activity: Cell<usize>,
     active_routines: Cell<usize>,
+    waiting_jobs: Cell<usize>,
     busy: Cell<bool>,
 }
 
@@ -133,12 +140,15 @@ impl Sidebar {
         let activity = borderless_button(mtm, target, sel!(showActivity:), y, NAV_HEIGHT);
         y += NAV_HEIGHT;
         let routines = borderless_button(mtm, target, sel!(showRoutines:), y, NAV_HEIGHT);
+        y += NAV_HEIGHT;
+        let autopilot = borderless_button(mtm, target, sel!(showAutopilot:), y, NAV_HEIGHT);
         y += NAV_HEIGHT + SECTION_GAP;
         view.addSubview(&chat);
         view.addSubview(&tasks);
         view.addSubview(&slack);
         view.addSubview(&activity);
         view.addSubview(&routines);
+        view.addSubview(&autopilot);
 
         let tasks_badge = badge(mtm, &tasks, &theme::highlight());
         view.addSubview(&tasks_badge);
@@ -146,6 +156,8 @@ impl Sidebar {
         view.addSubview(&activity_badge);
         let routines_badge = badge(mtm, &routines, &theme::link());
         view.addSubview(&routines_badge);
+        let autopilot_badge = badge(mtm, &autopilot, &theme::accent());
+        view.addSubview(&autopilot_badge);
 
         if !actions.is_empty() {
             let label = NSTextField::labelWithString(&NSString::from_str("QUICK ACTIONS"), mtm);
@@ -193,16 +205,19 @@ impl Sidebar {
             tasks_badge,
             activity_badge,
             routines_badge,
+            autopilot_badge,
             chat,
             tasks,
             slack,
             activity,
             routines,
+            autopilot,
             actions: action_buttons,
             selected: Cell::new(Selection::Chat),
             open_tasks: Cell::new(0),
             unread_activity: Cell::new(0),
             active_routines: Cell::new(0),
+            waiting_jobs: Cell::new(0),
             busy: Cell::new(false),
         };
         sidebar.refresh();
@@ -222,6 +237,11 @@ impl Sidebar {
     /// Draws the cat beside the title in `coat`.
     pub fn set_active_routines(&self, count: usize) {
         self.active_routines.set(count);
+        self.refresh();
+    }
+
+    pub fn set_waiting_jobs(&self, count: usize) {
+        self.waiting_jobs.set(count);
         self.refresh();
     }
 
@@ -259,6 +279,7 @@ impl Sidebar {
         set_badge(&self.tasks_badge, self.open_tasks.get());
         set_badge(&self.activity_badge, self.unread_activity.get());
         set_badge(&self.routines_badge, self.active_routines.get());
+        set_badge(&self.autopilot_badge, self.waiting_jobs.get());
         let selected = self.selected.get();
         let pages = [
             (&self.chat, "Chat", Selection::Chat),
@@ -266,6 +287,7 @@ impl Sidebar {
             (&self.slack, "Slack", Selection::Slack),
             (&self.activity, "Activity", Selection::Activity),
             (&self.routines, "Scheduled", Selection::Routines),
+            (&self.autopilot, "Autopilot", Selection::Autopilot),
         ];
         for (button, text, selection) in pages {
             set_entry(
