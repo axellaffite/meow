@@ -4,15 +4,11 @@
 
 use serde::Deserialize;
 
-use crate::tasks::{FoundTask, SLACK_NO_REPLY_RULE, Task};
+use crate::tasks::{FoundTask, SLACK_NO_REPLY_RULE, Task, TaskList, id_for};
 
 pub const SYNC_FENCE: &str = "meow-sync";
 /// How far back the very first check looks for new things.
 const FIRST_LOOKBACK_HOURS: u64 = 24;
-/// At most this many open tasks are sent, to keep the check small.
-const MAX_CHECKED: usize = 40;
-/// At most this many handled tasks are sent, so they are not reported again.
-pub const MAX_HANDLED: usize = 40;
 /// How Claude should judge whether I answered on Slack.
 pub const SLACK_REPLY_RULE: &str = "On Slack, I have answered when I posted in the same DM or channel after that message, in its thread or not, or reacted to it.";
 
@@ -22,8 +18,37 @@ pub struct SyncReport {
     /// Ids of open tasks that are resolved at their source.
     #[serde(default)]
     pub done: Vec<String>,
+    /// New things waiting on me.
     #[serde(default)]
-    pub new: Vec<FoundTask>,
+    pub new: Vec<SyncFound>,
+}
+
+/// A new thing as the check reports it, with the handled task it repeats, if any.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct SyncFound {
+    #[serde(flatten)]
+    pub found: FoundTask,
+    /// Id of a handled task this item repeats, even under another title or link.
+    #[serde(default)]
+    pub duplicate_of: Option<String>,
+}
+
+/// The new items worth adding: not a repeat of a task I ticked off (the check's
+/// `duplicate_of`, checked against the list), and not listed yet.
+pub fn fresh(report: &SyncReport, list: &TaskList) -> Vec<FoundTask> {
+    report
+        .new
+        .iter()
+        .filter(|item| {
+            let repeat = item
+                .duplicate_of
+                .as_deref()
+                .and_then(|id| list.get(id))
+                .is_some_and(|task| task.is_done());
+            !repeat && id_for(&item.found).is_some() && list.find(&item.found).is_none()
+        })
+        .map(|item| item.found.clone())
+        .collect()
 }
 
 /// The prompt for one check. `handled` are tasks I already ticked off, never
@@ -31,7 +56,6 @@ pub struct SyncReport {
 pub fn prompt(open: &[&Task], handled: &[&Task], since: Option<u64>, now: u64) -> String {
     let tasks: Vec<_> = open
         .iter()
-        .take(MAX_CHECKED)
         .map(|t| {
             serde_json::json!({
                 "id": t.id,
@@ -43,8 +67,9 @@ pub fn prompt(open: &[&Task], handled: &[&Task], since: Option<u64>, now: u64) -
         .collect();
     let handled: Vec<_> = handled
         .iter()
-        .take(MAX_HANDLED)
-        .map(|t| serde_json::json!({"title": t.title, "source": t.source, "url": t.url}))
+        .map(
+            |t| serde_json::json!({"id": t.id, "title": t.title, "source": t.source, "url": t.url}),
+        )
         .collect();
     let window = match since {
         Some(since) => format!(
@@ -67,13 +92,18 @@ pub fn prompt(open: &[&Task], handled: &[&Task], since: Option<u64>, now: u64) -
          an answer, emails waiting for my answer. A search result shows the message, not what came \
          after it: before reporting a Slack message, read its conversation (and its thread) from \
          that message on, and leave it out if I answered there. {SLACK_REPLY_RULE} Skip anything \
-         in either list below, including the same message, issue or pull request under another \
-         title or link: I have dealt with the handled ones and do not want them back.\n\n\
+         already in the open list, under the same title or link.\n\
+         3. Compare each item of step 2 with the handled list below: a handled task is the same \
+         when it is the same request (same Slack message or thread, same issue, same pull \
+         request, same email), even when its title is worded differently or its link is missing. \
+         Do not report it again: give it that handled task's id as \"duplicate_of\". Otherwise \
+         \"duplicate_of\" is null. When in doubt, report the item with null.\n\n\
          Open tasks (JSON):\n{}\n\n\
-         Already handled, never report again (JSON):\n{}\n\n\
+         Handled tasks, I have dealt with them, never report them again (JSON):\n{}\n\n\
          Reply with only a fenced code block with the info string `{SYNC_FENCE}` holding \
          {{\"done\": [ids of resolved tasks], \"new\": [{{\"title\": short imperative title, \
-         \"source\": \"Linear\"|\"GitHub\"|\"Slack\"|\"Gmail\", \"url\": link or null}}]}}. Give Slack messages \
+         \"source\": \"Linear\"|\"GitHub\"|\"Slack\"|\"Gmail\", \"url\": link or null, \
+         \"duplicate_of\": handled task id or null}}]}}. Give Slack messages \
          and emails their link, which later checks need to tell when they are resolved.",
         serde_json::Value::Array(tasks),
         serde_json::Value::Array(handled)
@@ -114,7 +144,6 @@ fn iso_time(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tasks::TaskList;
 
     fn list() -> TaskList {
         let mut list = TaskList::default();
@@ -144,8 +173,8 @@ mod tests {
         let mut list = list();
         let id = list.display()[0].id.clone();
         list.set_done(&id, true, 2);
-        let prompt = prompt(&[], &list.recently_done(MAX_HANDLED), None, 100);
-        assert!(prompt.contains("never report again"));
+        let prompt = prompt(&[], &list.recently_done(), None, 100);
+        assert!(prompt.contains("never report them again"));
         assert!(prompt.contains("Review PR 3172"));
         assert!(prompt.contains("in its thread or not"));
         assert!(
@@ -174,7 +203,119 @@ mod tests {
         let answer = "Done.\n```meow-sync\n{\"done\": [\"url:a\"], \"new\": [{\"title\": \"Reply to Bo\", \"source\": \"Slack\", \"url\": null}]}\n```";
         let report = parse(answer).unwrap();
         assert_eq!(report.done, ["url:a"]);
-        assert_eq!(report.new[0].title, "Reply to Bo");
+        assert_eq!(report.new[0].found.title, "Reply to Bo");
+        assert_eq!(report.new[0].duplicate_of, None);
+    }
+
+    fn slack(title: &str, url: &str) -> FoundTask {
+        FoundTask {
+            title: title.into(),
+            source: Some("Slack".into()),
+            url: Some(url.into()),
+        }
+    }
+
+    fn sync_found(title: &str, url: Option<&str>, duplicate_of: Option<&str>) -> SyncFound {
+        SyncFound {
+            found: FoundTask {
+                title: title.into(),
+                source: Some("Slack".into()),
+                url: url.map(str::to_string),
+            },
+            duplicate_of: duplicate_of.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn prompt_sends_every_handled_task_with_its_id() {
+        let mut list = TaskList::default();
+        let items: Vec<_> = (0..60)
+            .map(|i| slack(&format!("Task {i}"), &format!("https://s/{i}")))
+            .collect();
+        list.merge(&items, 1);
+        for item in &items {
+            let id = id_for(item).unwrap();
+            list.set_done(&id, true, 2);
+        }
+        let prompt = prompt(&[], &list.recently_done(), None, 100);
+        assert!(prompt.contains("\"id\":\"url:https://s/0\""));
+        assert!(
+            prompt.contains("Task 0\""),
+            "the oldest handled task is still sent"
+        );
+    }
+
+    #[test]
+    fn fresh_drops_a_reworded_repeat_of_a_ticked_task() {
+        let mut list = TaskList::default();
+        let original = slack(
+            "Répondre à Marie Vachelard sur le projet photomaton infra",
+            "https://pictarine.slack.com/archives/D05UTNECTN1/p1792660520346189",
+        );
+        list.merge(std::slice::from_ref(&original), 1);
+        list.set_done(&id_for(&original).unwrap(), true, 2);
+        let report = SyncReport {
+            done: vec![],
+            new: vec![sync_found(
+                "Répondre à Marie Vachelard sur le projet photomaton (infra), 15 min demandées",
+                None,
+                Some(&id_for(&original).unwrap()),
+            )],
+        };
+        assert!(fresh(&report, &list).is_empty());
+    }
+
+    #[test]
+    fn fresh_keeps_another_request_from_the_same_channel() {
+        let mut list = TaskList::default();
+        let original = slack("Reply to Marie about the photomaton", "https://s/1");
+        list.merge(std::slice::from_ref(&original), 1);
+        list.set_done(&id_for(&original).unwrap(), true, 2);
+        let report = SyncReport {
+            done: vec![],
+            new: vec![sync_found(
+                "Reply to Marie about the invoice",
+                Some("https://s/2"),
+                None,
+            )],
+        };
+        assert_eq!(fresh(&report, &list).len(), 1);
+    }
+
+    #[test]
+    fn fresh_ignores_a_duplicate_id_that_is_not_a_ticked_task() {
+        let mut list = TaskList::default();
+        let open = slack("Reply to Bo", "https://s/3");
+        list.merge(std::slice::from_ref(&open), 1);
+        let report = SyncReport {
+            done: vec![],
+            new: vec![sync_found(
+                "Reply to Bo again",
+                None,
+                Some("url:https://s/nope"),
+            )],
+        };
+        assert_eq!(fresh(&report, &list).len(), 1);
+    }
+
+    #[test]
+    fn fresh_skips_items_already_listed() {
+        let mut list = TaskList::default();
+        let open = slack("Reply to Bo", "https://s/3");
+        list.merge(std::slice::from_ref(&open), 1);
+        let report = SyncReport {
+            done: vec![],
+            new: vec![sync_found("Reply to Bo", Some("https://s/3"), None)],
+        };
+        assert!(fresh(&report, &list).is_empty());
+    }
+
+    #[test]
+    fn parses_duplicate_of() {
+        let answer = "```meow-sync\n{\"new\": [{\"title\": \"Reply to Bo\", \"source\": \"Slack\", \"url\": null, \"duplicate_of\": \"url:a\"}]}\n```";
+        let report = parse(answer).unwrap();
+        assert_eq!(report.new[0].duplicate_of.as_deref(), Some("url:a"));
+        assert_eq!(report.new[0].found.title, "Reply to Bo");
     }
 
     #[test]

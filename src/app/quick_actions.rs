@@ -4,7 +4,6 @@ use meow::action_results::{self, ActionResults};
 use meow::actions::QuickAction;
 use meow::conversations::{ChatId, Conversation};
 use meow::plan::DayPlan;
-use meow::tasks;
 
 use crate::ui::sidebar::Page;
 
@@ -62,7 +61,7 @@ impl App {
         self.start_request(
             &id,
             &run_label(&action),
-            &action.full_prompt(now_secs(), &self.tasks.recently_done(tasks::MAX_HANDLED)),
+            &action.full_prompt(now_secs(), &self.tasks.recently_done()),
             RunKind::Action,
         );
         if self.run.is_some()

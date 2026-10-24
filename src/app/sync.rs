@@ -9,7 +9,7 @@ use meow::activity::{self, Kind, Link, Note};
 use meow::claude::{ClaudeEvent, Run};
 use meow::clock;
 use meow::source::Source;
-use meow::{sync, tasks};
+use meow::sync;
 
 use super::{App, now_secs};
 
@@ -82,7 +82,7 @@ impl App {
         let now = now_secs();
         let prompt = sync::prompt(
             &self.tasks.open(),
-            &self.tasks.recently_done(sync::MAX_HANDLED),
+            &self.tasks.recently_done(),
             self.sync.last_ok,
             now,
         );
@@ -132,19 +132,16 @@ impl App {
                     .filter(|task| !task.is_done())
                     .map(|task| (task.title.clone(), Source::parse(&task.source)))
                     .collect();
-                let new_tasks: Vec<(&str, Source)> = report
-                    .new
+                let new_found = sync::fresh(&report, &self.tasks);
+                let new_tasks: Vec<(&str, Source)> = new_found
                     .iter()
-                    .filter(|found| {
-                        tasks::id_for(found).is_some() && self.tasks.find(found).is_none()
-                    })
                     .map(|found| {
                         let source = found.source.as_deref().map_or(Source::Other, Source::parse);
                         (found.title.as_str(), source)
                     })
                     .collect();
                 let closed = self.tasks.close_resolved(&report.done, now);
-                let added = self.tasks.merge(&report.new, now);
+                let added = self.tasks.merge(&new_found, now);
                 if closed + added > 0 {
                     self.tasks_changed();
                 }

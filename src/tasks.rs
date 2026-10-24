@@ -224,9 +224,10 @@ impl TaskList {
         })
     }
 
-    /// Tasks done lately, most recent first, so a check does not report them again.
-    pub fn recently_done(&self, limit: usize) -> Vec<&Task> {
-        self.completed().into_iter().take(limit).collect()
+    /// Every task done within [`DONE_TTL_SECS`], most recent first, so a check
+    /// does not report them again.
+    pub fn recently_done(&self) -> Vec<&Task> {
+        self.completed()
     }
 
     pub fn get(&self, id: &str) -> Option<&Task> {
@@ -366,10 +367,6 @@ pub fn done_reply_prompt() -> String {
     )
 }
 
-/// At most this many done tasks are listed to a quick action, so it does not
-/// bring them back.
-pub const MAX_HANDLED: usize = 40;
-
 /// Tells a quick action which tasks I have dealt with, so it leaves them out;
 /// empty when there are none.
 pub fn handled_instruction(handled: &[&Task]) -> String {
@@ -378,7 +375,6 @@ pub fn handled_instruction(handled: &[&Task]) -> String {
     }
     let handled: Vec<_> = handled
         .iter()
-        .take(MAX_HANDLED)
         .map(|t| serde_json::json!({"title": t.title, "source": t.source, "url": t.url}))
         .collect();
     format!(

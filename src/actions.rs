@@ -266,7 +266,7 @@ mod tests {
         let id = list.display()[0].id.clone();
         list.set_done(&id, true, 1);
         let action = QuickAction::new("Inbox", "Summarize my inbox");
-        let prompt = action.full_prompt(0, &list.recently_done(crate::tasks::MAX_HANDLED));
+        let prompt = action.full_prompt(0, &list.recently_done());
         assert!(prompt.contains("already dealt with"));
         assert!(prompt.contains("Reply to Marine"));
         assert!(!action.full_prompt(0, &[]).contains("already dealt with"));
