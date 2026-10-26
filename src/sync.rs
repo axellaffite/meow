@@ -89,7 +89,8 @@ pub fn prompt(open: &[&Task], handled: &[&Task], since: Option<u64>, now: u64) -
          {SLACK_NO_REPLY_RULE} Only count it as resolved when you are sure.\n\
          2. Find new things waiting on me {window}: Linear issues newly assigned to me, pull \
          requests newly requesting my review, Slack DMs or mentions I have not answered that need \
-         an answer, emails waiting for my answer. A search result shows the message, not what came \
+         an answer, emails waiting for my answer. {SLACK_NO_REPLY_RULE} A search result shows the \
+         message, not what came \
          after it: before reporting a Slack message, read its conversation (and its thread) from \
          that message on, and leave it out if I answered there. {SLACK_REPLY_RULE} Skip anything \
          already in the open list, under the same title or link.\n\

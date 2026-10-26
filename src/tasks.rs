@@ -14,10 +14,13 @@ pub const DONE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 const MAX_FOUND: usize = 50;
 const MAX_TITLE_CHARS: usize = 200;
 const MANUAL_SOURCE: &str = "Me";
-/// Slack messages that need no answer, so "ok" or "super merci" never becomes a task.
+/// Slack messages that need no answer, so "ok" or "super merci" never becomes a task, and
+/// neither does an update that only tells me something is decided or done.
 pub const SLACK_NO_REPLY_RULE: &str = "On Slack, a message that only acknowledges, thanks, \
      agrees or wraps up (\"ok\", \"thanks\", \"super merci\", \"parfait\", a thumbs up), in any \
-     language, needs no answer and is never a task.";
+     language, needs no answer and is never a task. So does a message that only informs me of \
+     a decision or a result (\"je te confirme\", \"c'est fait\") with no question and no request \
+     to me.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
@@ -69,6 +72,10 @@ impl TaskGroup<'_> {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskList {
     tasks: Vec<Task>,
+    /// Tasks the background check found resolved: removed from the list, but kept
+    /// so the check never reports them again. Forgotten after [`DONE_TTL_SECS`].
+    #[serde(default)]
+    dismissed: Vec<Task>,
 }
 
 impl TaskList {
@@ -150,9 +157,10 @@ impl TaskList {
                 source: Some(source.clone()),
                 url: url.map(str::to_string),
             };
-            // A task already listed, even done, keeps its state.
+            // A task already listed, even done, keeps its state; a dismissed one stays gone.
             match self.position(&probe) {
                 Some(index) => self.tasks[index].title = title,
+                None if self.find(&probe).is_some() => {}
                 None => {
                     self.tasks.push(Task {
                         id,
@@ -182,17 +190,19 @@ impl TaskList {
         self.tasks.iter().filter(|t| !t.is_done()).collect()
     }
 
-    /// Ticks off open tasks the background check found resolved; unknown or
-    /// already done ids are ignored. Returns how many were ticked.
+    /// Removes open tasks the background check found resolved; unknown or
+    /// already done ids are ignored. Returns how many were removed.
     pub fn close_resolved(&mut self, ids: &[String], now: u64) -> usize {
-        let mut closed = 0;
-        for task in &mut self.tasks {
-            if !task.is_done() && ids.contains(&task.id) {
-                task.done_at = Some(now);
-                task.auto_done = true;
-                closed += 1;
-            }
-        }
+        let (resolved, kept): (Vec<Task>, Vec<Task>) = std::mem::take(&mut self.tasks)
+            .into_iter()
+            .partition(|t| !t.is_done() && ids.contains(&t.id));
+        self.tasks = kept;
+        let closed = resolved.len();
+        self.dismissed.extend(resolved.into_iter().map(|mut task| {
+            task.done_at = Some(now);
+            task.auto_done = true;
+            task
+        }));
         closed
     }
 
@@ -206,40 +216,39 @@ impl TaskList {
     /// query, so a Slack thread link matches its message link), or same
     /// source and title.
     pub fn find(&self, found: &FoundTask) -> Option<&Task> {
-        self.position(found).map(|index| &self.tasks[index])
+        self.position(found)
+            .map(|index| &self.tasks[index])
+            .or_else(|| position_in(&self.dismissed, found).map(|index| &self.dismissed[index]))
     }
 
     fn position(&self, found: &FoundTask) -> Option<usize> {
-        let id = id_for(found)?;
-        let link = clean_url(found.url.as_deref()).map(link_key);
-        let title = clean_title(&found.title)?.to_lowercase();
-        let source = clean_source(found.source.as_deref()).to_lowercase();
-        self.tasks.iter().position(|t| t.id == id).or_else(|| {
-            self.tasks
-                .iter()
-                .position(|t| match (&link, t.url.as_deref()) {
-                    (Some(link), Some(url)) => *link == link_key(url),
-                    _ => t.source.to_lowercase() == source && t.title.to_lowercase() == title,
-                })
-        })
+        position_in(&self.tasks, found)
     }
 
-    /// Every task done within [`DONE_TTL_SECS`], most recent first, so a check
-    /// does not report them again.
+    /// Every task done within [`DONE_TTL_SECS`], dismissed ones included, most
+    /// recent first, so a check does not report them again.
     pub fn recently_done(&self) -> Vec<&Task> {
-        self.completed()
+        let mut done = self.completed();
+        done.extend(self.dismissed.iter());
+        done.sort_by_key(|t| std::cmp::Reverse(t.done_at));
+        done
     }
 
     pub fn get(&self, id: &str) -> Option<&Task> {
-        self.tasks.iter().find(|t| t.id == id)
+        self.tasks
+            .iter()
+            .chain(&self.dismissed)
+            .find(|t| t.id == id)
     }
 
     /// Forgets tasks that were done more than [`DONE_TTL_SECS`] ago.
     pub fn prune(&mut self, now: u64) {
-        self.tasks.retain(|t| {
+        let keep = |t: &Task| {
             t.done_at
                 .is_none_or(|done| now.saturating_sub(done) < DONE_TTL_SECS)
-        });
+        };
+        self.tasks.retain(keep);
+        self.dismissed.retain(keep);
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -272,6 +281,20 @@ pub fn default_path() -> Option<PathBuf> {
 }
 
 /// The id `found` has, or would have, in the list; `None` if it has no title.
+/// Index in `tasks` of the task `found` is about, see [`TaskList::find`].
+fn position_in(tasks: &[Task], found: &FoundTask) -> Option<usize> {
+    let id = id_for(found)?;
+    let link = clean_url(found.url.as_deref()).map(link_key);
+    let title = clean_title(&found.title)?.to_lowercase();
+    let source = clean_source(found.source.as_deref()).to_lowercase();
+    tasks.iter().position(|t| t.id == id).or_else(|| {
+        tasks.iter().position(|t| match (&link, t.url.as_deref()) {
+            (Some(link), Some(url)) => *link == link_key(url),
+            _ => t.source.to_lowercase() == source && t.title.to_lowercase() == title,
+        })
+    })
+}
+
 pub fn id_for(found: &FoundTask) -> Option<String> {
     let title = clean_title(&found.title)?;
     let source = clean_source(found.source.as_deref());
@@ -631,6 +654,10 @@ mod tests {
         list.set_done(&milk, true, 2);
         let ids = vec!["url:g1".to_string(), milk.clone(), "unknown".to_string()];
         assert_eq!(list.close_resolved(&ids, 3), 1);
+        assert!(
+            titles(&list).iter().all(|t| *t != "PR"),
+            "resolved task is removed"
+        );
         let pr = list.get("url:g1").unwrap();
         assert!(pr.is_done() && pr.auto_done);
         assert!(
@@ -641,13 +668,25 @@ mod tests {
     }
 
     #[test]
-    fn unticking_an_auto_done_task_clears_the_mark() {
+    fn a_removed_task_is_not_listed_again_and_not_reported_again() {
+        let mut list = TaskList::default();
+        let pr = found("PR", "GitHub", Some("g1"));
+        list.merge(std::slice::from_ref(&pr), 1);
+        list.close_resolved(&["url:g1".to_string()], 2);
+        list.set_done("url:g1", false, 3);
+        assert!(list.display().is_empty());
+        assert_eq!(list.merge(std::slice::from_ref(&pr), 4), 0);
+        assert!(list.find(&pr).is_some());
+        assert!(list.recently_done().iter().any(|t| t.id == "url:g1"));
+    }
+
+    #[test]
+    fn removed_tasks_are_forgotten_after_the_ttl() {
         let mut list = TaskList::default();
         list.merge(&[found("PR", "GitHub", Some("g1"))], 1);
         list.close_resolved(&["url:g1".to_string()], 2);
-        list.set_done("url:g1", false, 3);
-        let pr = list.get("url:g1").unwrap();
-        assert!(!pr.is_done() && !pr.auto_done);
+        list.prune(2 + DONE_TTL_SECS);
+        assert!(list.get("url:g1").is_none());
     }
 
     #[test]
