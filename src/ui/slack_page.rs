@@ -10,9 +10,10 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::time::Instant;
 
+use objc2::Message;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{AllocAnyThread, MainThreadMarker, MainThreadOnly, sel};
+use objc2::runtime::ProtocolObject;
+use objc2::{AllocAnyThread, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAttachmentAttributeName, NSAutoresizingMaskOptions, NSButton, NSScrollView, NSTextAlignment,
     NSTextAttachment, NSTextField, NSTextView, NSView, NSWindow,
@@ -21,6 +22,7 @@ use objc2_foundation::{
     NSAttributedString, NSMutableAttributedString, NSPoint, NSRange, NSRect, NSSize, NSString,
 };
 
+use super::action::{Action, ActionSink, LinkDelegate};
 use super::bubble;
 use super::controller::Controller;
 use super::emoji_text::{self, Animated, EmojiGlyph, ImageGlyph};
@@ -57,6 +59,43 @@ const BACK_TO_LIST: &str = "‹ Messages";
 const BACK_TO_CONVERSATION: &str = "‹ Back";
 const REPLY_HINT: &str = "Reply, or ask Claude… (Esc: back)";
 const THREAD_REPLY_HINT: &str = "Reply in thread, or ask Claude… (Esc: back)";
+
+/// The Slack page's id among the features' pages.
+pub const PAGE_ID: &str = "slack";
+
+/// What the Slack page's controls ask for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlackAction {
+    SignIn,
+    /// Show the list's tab of direct messages, or of channels.
+    Tab(SlackTab),
+    /// Open the conversation in this row, as last listed.
+    Open(usize),
+    /// Open the thread of the open conversation's message at this index.
+    OpenThread(usize),
+    /// Back from a thread to its conversation, or from a conversation to the list.
+    Back,
+    /// Send the reply typed in the open conversation.
+    Send,
+    /// Ask Claude, privately, about the open conversation.
+    Ask,
+    /// Have Claude research and draft the reply, with the user's tools.
+    Autocomplete,
+    /// Have Claude propose a coding agent for the open conversation.
+    Agent,
+    /// Turn drafting in the user's own style on or off.
+    ToggleWriteAsMe,
+    /// Learn the user's style from their Slack messages.
+    LearnMyStyle,
+    /// Put Claude's draft in the reply box.
+    UseDraft,
+    /// Create the calendar event Claude proposed.
+    CreateEvent,
+    /// Close the private Claude panel.
+    CloseAssist,
+    /// Start the coding agent Claude proposed.
+    StartAgent,
+}
 
 /// Which conversations the list shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -135,12 +174,26 @@ pub struct SlackPage {
     /// Conversation ids in the order shown; row buttons carry an index into it.
     shown_ids: RefCell<Vec<String>>,
     tab: Cell<SlackTab>,
-    target: Retained<Controller>,
+    /// The targets of the page's fixed controls, kept for them.
+    _actions: ActionSink<SlackAction>,
+    /// Opens threads from the transcript's reply counts; kept, as the
+    /// transcript holds its delegate weakly.
+    _links: Retained<LinkDelegate>,
+    /// The targets of the list's tabs and rows, dropped as they are redrawn.
+    row_actions: ActionSink<SlackAction>,
     mtm: MainThreadMarker,
 }
 
 impl SlackPage {
-    pub fn new(mtm: MainThreadMarker, controller: &Retained<Controller>, frame: NSRect) -> Self {
+    /// The page, its controls reporting to `on_action`; `controller` handles
+    /// the text fields' keys and links.
+    pub fn new(
+        mtm: MainThreadMarker,
+        controller: &Retained<Controller>,
+        frame: NSRect,
+        on_action: impl Fn(SlackAction) + 'static,
+    ) -> Self {
+        let actions = ActionSink::new(mtm, on_action);
         let view = NSView::initWithFrame(NSView::alloc(mtm), frame);
         view.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewWidthSizable
@@ -148,15 +201,14 @@ impl SlackPage {
         );
         // The page runs under the bubble's right padding; content keeps clear of it.
         let (width, height) = (frame.size.width - bubble::PADDING, frame.size.height);
-        let target: &AnyObject = controller;
 
         // --- Signed-out state ---------------------------------------------
         let signin = widgets::text_button(
             mtm,
             "Sign in to Slack",
             widgets::ButtonStyle::Primary,
-            target,
-            sel!(signInSlack:),
+            &actions.target(SlackAction::SignIn),
+            Action::selector(),
         );
         signin.setFrame(rect(
             MARGIN,
@@ -204,7 +256,7 @@ impl SlackPage {
 
         let voice = VoiceBar::new(
             mtm,
-            controller,
+            &actions,
             rect(
                 MARGIN,
                 height - MARGIN - slack_voice_bar::HEIGHT,
@@ -239,8 +291,8 @@ impl SlackPage {
             mtm,
             BACK_TO_LIST,
             widgets::ButtonStyle::Link,
-            target,
-            sel!(slackBack:),
+            &actions.target(SlackAction::Back),
+            Action::selector(),
         );
         back.setFrame(rect(INDENT, 0.0, BACK_WIDTH, TOP_HEIGHT));
         strip.addSubview(&back);
@@ -273,10 +325,12 @@ impl SlackPage {
         strip.addSubview(&live);
 
         let input = widgets::text_field(mtm, REPLY_HINT);
-        // SAFETY: the controller lives as long as the app, so the weak target/delegate stay valid.
+        let send_target = actions.target(SlackAction::Send);
+        // SAFETY: the page keeps the target, and the controller lives as long
+        // as the app, so the weak target and delegate stay valid.
         unsafe {
-            input.setTarget(Some(target));
-            input.setAction(Some(sel!(sendSlack:)));
+            input.setTarget(Some(&send_target));
+            input.setAction(Some(Action::selector()));
             input.setDelegate(Some(ProtocolObject::from_ref(&**controller)));
         }
         // Send on Return only. By default the field also fires its action when
@@ -290,29 +344,29 @@ impl SlackPage {
             mtm,
             "Send",
             widgets::ButtonStyle::Go,
-            target,
-            sel!(sendSlack:),
+            &send_target,
+            Action::selector(),
         );
         let ask = widgets::text_button(
             mtm,
             "Ask",
             widgets::ButtonStyle::Accent,
-            target,
-            sel!(askSlack:),
+            &actions.target(SlackAction::Ask),
+            Action::selector(),
         );
         let auto = widgets::text_button(
             mtm,
             "Auto",
             widgets::ButtonStyle::OutlineAccent,
-            target,
-            sel!(autocompleteSlack:),
+            &actions.target(SlackAction::Autocomplete),
+            Action::selector(),
         );
         let agent = widgets::text_button(
             mtm,
             "Agent",
             widgets::ButtonStyle::OutlineLink,
-            target,
-            sel!(agentSlack:),
+            &actions.target(SlackAction::Agent),
+            Action::selector(),
         );
         agent.setToolTip(Some(&NSString::from_str(
             "Start a coding agent in Superset for this conversation",
@@ -332,6 +386,7 @@ impl SlackPage {
         let assist = AssistPanel::new(
             mtm,
             controller,
+            &actions,
             rect(
                 MARGIN,
                 widgets::STACKED_COMPOSER_HEIGHT + MARGIN,
@@ -363,7 +418,15 @@ impl SlackPage {
         transcript.setDrawsBackground(false);
         transcript.setTextContainerInset(NSSize::new(4.0, 6.0));
         rich_text::style_links(&transcript);
-        transcript.setDelegate(Some(ProtocolObject::from_ref(&**controller)));
+        let open_thread = actions.sender();
+        let links = LinkDelegate::new(mtm, move |url| match rich_text::thread_index(url) {
+            Some(index) => {
+                open_thread(SlackAction::OpenThread(index));
+                true
+            }
+            None => false,
+        });
+        transcript.setDelegate(Some(ProtocolObject::from_ref(&*links)));
         view.addSubview(&convo_scroll);
         input.keep_clear(&convo_scroll);
 
@@ -390,16 +453,25 @@ impl SlackPage {
             composer,
             shown_ids: RefCell::new(Vec::new()),
             tab: Cell::new(SlackTab::Direct),
-            target: controller.clone(),
+            row_actions: actions.sibling(),
+            _actions: actions,
+            _links: links,
             mtm,
         };
         page.show_signed_out(None);
         page
     }
 
-    pub fn focus(&self, window: &NSWindow) {
-        if !self.input.isHidden() {
-            window.makeFirstResponder(Some(&self.input));
+    /// The reply box, to put the cursor in when the page shows.
+    pub fn input_view(&self) -> Retained<NSView> {
+        let field: &NSView = &self.input;
+        field.retain()
+    }
+
+    /// Puts `text` in the reply box and focuses it.
+    pub fn put_draft(&self, text: &str) {
+        if let Some(window) = self.view.window() {
+            self.set_input(text, &window);
         }
     }
 
@@ -506,6 +578,7 @@ impl SlackPage {
         for row in self.list.subviews().iter() {
             row.removeFromSuperview();
         }
+        self.row_actions.clear();
         let tab = self.tab.get();
         let in_tab = |row: &&ConversationRow| row.direct == (tab == SlackTab::Direct);
         let unread = |direct: bool| {
@@ -652,23 +725,12 @@ impl SlackPage {
     /// "Direct · 3" and "Channels · 5": the open tab filled, each with how
     /// many of its conversations have unread messages.
     fn add_tabs(&self, direct_unread: usize, channels_unread: usize, width: f64) {
-        let target: &AnyObject = &self.target;
         let tabs = [
-            (
-                SlackTab::Direct,
-                "Direct",
-                direct_unread,
-                sel!(showSlackDirect:),
-            ),
-            (
-                SlackTab::Channels,
-                "Channels",
-                channels_unread,
-                sel!(showSlackChannels:),
-            ),
+            (SlackTab::Direct, "Direct", direct_unread),
+            (SlackTab::Channels, "Channels", channels_unread),
         ];
         let tab_width = TAB_WIDTH.min((width - TAB_GAP) / 2.0);
-        for (n, (tab, name, unread, action)) in tabs.into_iter().enumerate() {
+        for (n, (tab, name, unread)) in tabs.into_iter().enumerate() {
             let label = match unread {
                 0 => name.to_string(),
                 n => format!("{name} · {n}"),
@@ -678,7 +740,8 @@ impl SlackPage {
             } else {
                 widgets::ButtonStyle::Quiet
             };
-            let button = widgets::text_button(self.mtm, &label, style, target, action);
+            let target = self.row_actions.target(SlackAction::Tab(tab));
+            let button = widgets::text_button(self.mtm, &label, style, &target, Action::selector());
             button.setToolTip(Some(&NSString::from_str(&format!(
                 "{name}: {unread} with unread messages"
             ))));
@@ -711,7 +774,6 @@ impl SlackPage {
     /// A card holding the conversation name (clickable), a green square when
     /// it has unread messages, and its mention count and last activity on the right.
     fn add_row(&self, index: usize, row: &ConversationRow, width: f64, y: f64) {
-        let target: &AnyObject = &self.target;
         let card = FlippedView::new(self.mtm, rect(0.0, y, width, CARD_HEIGHT));
         card.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
         widgets::paint(&card, Some(&theme::card()), None);
@@ -727,10 +789,9 @@ impl SlackPage {
             ),
             row_title(&row.title, row.unread, false),
             row_title(&row.title, row.unread, true),
-            target,
-            sel!(openSlack:),
+            &self.row_actions.target(SlackAction::Open(index)),
+            Action::selector(),
         );
-        button.setTag(index as isize);
         button.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
         card.addSubview(&button);
         self.add_meta(&card, row, width);

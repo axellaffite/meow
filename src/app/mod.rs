@@ -1,27 +1,19 @@
 //! Ties the cat, the chat bubble, the hotkey and Claude runs together.
 
 mod activity;
-mod agenda;
-mod agents;
-mod coat;
-mod downloads;
+pub(crate) mod agents;
+mod calendar;
+pub(crate) mod feature;
+pub(crate) mod mailbox;
 mod plan;
 mod quick_actions;
 mod requests;
-mod routines;
 mod rsvp;
-mod schedule;
-mod slack;
-mod slack_assist;
-mod slack_calendar;
-mod slack_emoji;
-mod slack_voice;
 mod snapshot;
-mod sync;
 mod task_actions;
-mod update;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -36,9 +28,9 @@ use meow::actions::{self, QuickAction};
 use meow::behavior::{Bounds, Cat, Inputs, PropView, Rng};
 use meow::claude::ClaudeEnv;
 use meow::conversations::{ChatId, Conversation, Conversations};
-use meow::settings::Settings;
+use meow::settings::{self, Store};
 use meow::source::Icons;
-use meow::sprites::{Facing, Look, render, render_prop};
+use meow::sprites::{Coat, Facing, Look, render, render_prop};
 use meow::tasks::{self, TaskList};
 use meow::transcript::Transcript;
 use objc2::MainThreadMarker;
@@ -99,13 +91,17 @@ struct App {
     action_results: ActionResults,
     /// Where action results are saved; `None` when the file could not be read.
     results_path: Option<PathBuf>,
-    settings: Settings,
-    /// Where settings are saved; `None` when the file could not be read.
-    settings_path: Option<PathBuf>,
-    /// The theme submenu of the cat's menu, to check the current coat.
-    coat_menu: Retained<NSMenu>,
-    /// A theme being made from a photo of the user's cat.
-    cat_photo: coat::CatPhotoState,
+    /// The settings file, shared with the features.
+    store: Store,
+    /// The cat's right-click menu.
+    cat_menu: Retained<NSMenu>,
+    /// A feature changed its menu items: the cat's menu is filled again.
+    menu_changed: bool,
+    /// A feature asked to quit, done once the features are back (see
+    /// `feature::after_features`).
+    quitting: bool,
+    /// What the cat wears, as the appearance feature says.
+    coat: Coat,
     cat: Cat,
     /// The screen height of the ground the cat's height is measured from:
     /// the bottom of the screen it is on.
@@ -115,34 +111,20 @@ struct App {
     last_tick: Instant,
     claude: Option<Result<ClaudeEnv, String>>,
     discovery: Option<Receiver<Result<ClaudeEnv, String>>>,
-    run: Option<ActiveRun>,
+    /// Requests in flight, one at most per conversation.
+    runs: HashMap<ChatId, ActiveRun>,
     actions: Vec<QuickAction>,
-    /// The live Slack connection and conversation state.
-    slack: slack::SlackState,
-    /// The private Claude question about the open Slack conversation.
-    slack_assist: slack_assist::SlackAssist,
-    /// The workspace's custom emoji, and their images once downloaded.
-    emoji: slack_emoji::EmojiState,
-    /// The user's learned writing style, for Slack drafts.
-    voice: slack_voice::VoiceState,
-    /// The calendar tools of the user's Claude Code, for events from Slack.
-    calendar: slack_calendar::CalendarState,
-    /// The background check of tasks.
-    sync: sync::SyncState,
-    /// Daily quick actions.
-    schedule: schedule::ScheduleState,
-    /// The refresh of today's plan agenda from the calendar.
-    agenda: agenda::AgendaState,
+    /// The calendar tools of the user's Claude Code, for Slack's events, the
+    /// agenda and invitation answers.
+    calendar: calendar::CalendarState,
     /// Invitation answers on their way to the calendar.
     rsvp: rsvp::RsvpState,
     /// What happened in the background, for the Activity page.
     activity: activity::ActivityState,
-    /// Scheduled tasks and watches.
-    routines: routines::RoutineState,
     /// Coding agents started in Superset from the chat or Slack.
     agents: agents::AgentsState,
-    /// Updates from the GitHub releases, for release builds.
-    update: update::UpdateState,
+    /// The features moved to `src/features/` (see ARCHITECTURE.md).
+    features: Vec<Box<dyn feature::Feature>>,
     /// A reply arrived out of sight; the cat shows `!` until it is seen.
     unread: bool,
     /// The conversation whose reply is waiting.
@@ -161,19 +143,15 @@ pub fn start(mtm: MainThreadMarker) {
         .unwrap_or_default();
     let controller = Controller::new(mtm);
     let (actions, actions_error) = load_actions();
-    let (settings, settings_path, settings_error) = coat::load_settings();
+    let (mut store, settings_error) = load_settings();
+    let mut features = crate::features::all(&mut store);
     menus::install_main_menu(mtm, &controller);
-    let (cat_menu, coat_menu) = menus::cat_menu(
-        mtm,
-        &controller,
-        &actions,
-        &settings,
-        &update::version_label(),
-    );
+    let cat_menu = menus::cat_menu(mtm);
     let cat_window = CatWindow::new(mtm, &cat_menu);
     let prop_window = CatWindow::prop(mtm);
-    let chat = ChatWindow::new(mtm, &controller, &actions);
-    chat.set_coat(settings.coat);
+    let pages: Vec<_> = features.iter().flat_map(|f| f.pages()).collect();
+    let chat = ChatWindow::new(mtm, &controller, &actions, &pages);
+    feature::attach_pages(mtm, &controller, &mut features, &chat);
 
     let mut main = Transcript::default();
     let (hotkeys, hotkey_error) = match register_hotkey() {
@@ -187,22 +165,21 @@ pub fn start(mtm: MainThreadMarker) {
     let (action_results, results_path, results_error) =
         quick_actions::load_action_results(&actions);
     let (activity_state, activity_error) = activity::ActivityState::load();
-    let (routine_state, routines_error) = routines::RoutineState::load();
-    chat.render_routines(&routine_state.routines, None, now_secs());
     chat.render_activity(&activity_state.log, now_secs());
     crate::ui::notify::request_permission();
     let startup_errors = [
         &activity_error,
-        &routines_error,
         &fonts_error,
         &actions_error,
         &hotkey_error,
         &results_error,
         &settings_error,
     ];
+    let feature_errors: Vec<_> = features.iter().filter_map(|f| f.startup_error()).collect();
     for error in startup_errors
         .into_iter()
         .flatten()
+        .chain(&feature_errors)
         .chain(&migration_errors)
     {
         eprintln!("meow: {error}");
@@ -226,8 +203,6 @@ pub fn start(mtm: MainThreadMarker) {
             ((bounds.min_x + bounds.max_x) / 2.0, ground)
         })
         .unwrap_or((0.0, 0.0));
-    let mut cat = Cat::new(start_x);
-    cat.set_pig(settings.coat.is_pig());
     let app = App {
         mtm,
         controller,
@@ -248,37 +223,34 @@ pub fn start(mtm: MainThreadMarker) {
         tasks_path,
         action_results,
         results_path,
-        settings,
-        settings_path,
-        coat_menu,
-        cat_photo: coat::CatPhotoState::default(),
-        cat,
+        store,
+        cat_menu,
+        menu_changed: false,
+        quitting: false,
+        // Dressed by the appearance feature at the first tick, before drawing.
+        coat: Coat::default(),
+        cat: Cat::new(start_x),
         ground,
         rng: Rng::new(seed()),
         last_look: None,
         last_tick: Instant::now(),
-        unread: startup_errors.iter().any(|e| e.is_some()) || !migration_errors.is_empty(),
+        unread: startup_errors.iter().any(|e| e.is_some())
+            || !feature_errors.is_empty()
+            || !migration_errors.is_empty(),
         unread_chat: ChatId::Main,
         claude: None,
         discovery: Some(discovery),
-        run: None,
+        runs: HashMap::new(),
         actions,
-        slack: slack::SlackState::new(),
-        slack_assist: slack_assist::SlackAssist::default(),
-        voice: slack_voice::VoiceState::load(),
-        emoji: slack_emoji::EmojiState::default(),
-        calendar: slack_calendar::CalendarState::default(),
-        sync: sync::SyncState::from_env(),
-        schedule: schedule::ScheduleState::new(),
-        agenda: agenda::AgendaState::from_env(),
+        calendar: calendar::CalendarState::default(),
         rsvp: rsvp::RsvpState::default(),
         activity: activity_state,
-        routines: routine_state,
         agents: agents::AgentsState::default(),
-        update: update::UpdateState::from_env(),
+        features,
         snapshot: snapshot::Snapshot::from_env(),
         _hotkeys: hotkeys,
     };
+    app.fill_cat_menu();
     APP.with(|cell| cell.replace(Some(app)));
     schedule_ticks();
 }
@@ -299,6 +271,22 @@ fn schedule_ticks() {
         let timer = NSTimer::timerWithTimeInterval_repeats_block(TICK_SECONDS, true, &block);
         NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes);
     }
+}
+
+/// The settings file, or why it could not be read (then nothing is saved).
+fn load_settings() -> (Store, Option<String>) {
+    let Some(path) = settings::default_path() else {
+        return (Store::unsaved(), None);
+    };
+    match Store::load(&path) {
+        Ok(store) => (store, None),
+        Err(error) => (Store::unsaved(), Some(unsaved(&error))),
+    }
+}
+
+/// Why settings could not be read, and what that means.
+pub(crate) fn unsaved(error: &str) -> String {
+    format!("{error}. Settings changes won't be saved.")
 }
 
 /// Quick actions from the config file, or the defaults plus the reason it could not be used.
@@ -386,29 +374,19 @@ impl App {
         }
         self.poll_discovery();
         self.poll_claude();
-        self.poll_slack();
-        self.poll_emoji();
-        self.animate_slack();
-        self.poll_slack_assist();
-        self.poll_voice();
         self.poll_calendar_probe();
-        self.poll_sync();
         self.poll_pending_done();
-        self.poll_schedule();
-        self.poll_agenda();
         self.poll_rsvp();
-        self.poll_cat_photo();
-        self.poll_routines();
         self.poll_agents();
         self.poll_snapshot();
-        self.poll_update();
+        self.poll_features();
         self.animate(dt);
     }
 
     fn inputs(&self) -> Inputs {
         Inputs {
             // Looking at a photo of the user's cat shows too: it takes a while.
-            busy: self.run.is_some() || self.cat_photo.is_running(),
+            busy: !self.runs.is_empty() || self.features_thinking(),
             chat_open: self.chat.is_visible(),
             unread: self.unread,
             news: self.activity.log.unread_count() > 0,
@@ -448,7 +426,7 @@ impl App {
         let origin = NSPoint::new(self.cat.x, ground + self.cat.y);
         let look = self.show_news(look, origin, frame);
         if self.last_look != Some(look) {
-            let sprite = render(&look, self.settings.coat);
+            let sprite = render(&look, self.coat);
             self.cat_overflow.view.show(sprite.clone());
             self.cat_window.view.show(sprite);
             self.last_look = Some(look);
@@ -558,9 +536,6 @@ impl App {
             UiEvent::DragTo { x, y } => self.cat.drag_to(x, y - self.ground),
             UiEvent::Drop => self.cat.release(),
             UiEvent::Stroke(distance) => self.cat.stroke(distance),
-            UiEvent::SetCoat(index) => self.set_coat(index),
-            UiEvent::AddCoatFromPhoto => self.add_coat_from_photo(),
-            UiEvent::RemoveCoat => self.remove_coat(),
             UiEvent::Feed | UiEvent::ReleaseMouse => self.play(event),
             UiEvent::CoughUp => {
                 self.cat.cough_up();
@@ -586,28 +561,11 @@ impl App {
             }
             UiEvent::OpenTask(row) => self.open_task(row),
             UiEvent::ChatAboutTask(row) => self.chat_about_task(row),
-            UiEvent::ShowSlack => self.show_slack(),
-            UiEvent::SlackTab(tab) => self.show_slack_tab(tab),
             UiEvent::ShowActivity => self.show_activity(),
             UiEvent::OpenActivity(row) => self.open_activity(row),
             UiEvent::DismissActivity(row) => self.dismiss_activity(row),
             UiEvent::ClearActivity => self.clear_activity(),
-            UiEvent::ShowRoutines => self.show_routines(),
-            UiEvent::DeleteRoutine(row) => self.delete_routine(row),
-            UiEvent::SignInSlack => self.sign_in_slack(),
-            UiEvent::OpenSlackConversation(row) => self.open_slack_conversation(row),
-            UiEvent::OpenSlackThread(index) => self.open_slack_thread(index),
-            UiEvent::SlackBack => self.slack_back(),
-            UiEvent::SendSlack => self.send_slack(),
-            UiEvent::AskSlack => self.ask_slack(),
-            UiEvent::AutocompleteSlack => self.autocomplete_slack(),
-            UiEvent::CreateSlackEvent => self.create_slack_event(),
-            UiEvent::ToggleWriteAsMe => self.toggle_write_as_me(),
-            UiEvent::LearnMyStyle => self.learn_my_style(),
-            UiEvent::UseSlackDraft => self.use_slack_draft(),
-            UiEvent::CloseSlackAssist => self.close_slack_assist(),
-            UiEvent::AgentSlack => self.agent_slack(),
-            UiEvent::StartSlackAgent => self.start_slack_agent(),
+            UiEvent::ShowPage(page) => self.open_page(page),
             UiEvent::AskPlan => self.ask_about_plan(),
             UiEvent::TogglePlanItem(row) => self.toggle_plan_item(row),
             UiEvent::OpenPlanItem(row) => self.open_plan_item(row),
@@ -620,27 +578,32 @@ impl App {
             }
             UiEvent::ToggleSteps(turn) => self.toggle_steps(turn),
             UiEvent::Submit => self.submit(),
-            UiEvent::Escape if self.run.is_some() => self.cancel_run(),
-            UiEvent::Escape if self.chat.page() == Page::Slack && self.slack_assist_shown() => {
-                self.close_slack_assist()
-            }
+            // Esc stops the request of the conversation on screen, and only
+            // there: other pages and conversations keep theirs running.
             UiEvent::Escape
-                if self.chat.page() == Page::Slack && self.chat.slack().in_conversation() =>
+                if self.chat.page() == Page::Chat
+                    && self.is_running(self.conversations.active()) =>
             {
-                self.slack_back()
+                let id = self.conversations.active().clone();
+                self.cancel_run(&id)
             }
-            UiEvent::Escape => self.chat.hide(),
+            UiEvent::Escape => {
+                if !self.features_escape() {
+                    self.chat.hide();
+                }
+            }
             // Checked on the next tick: focus may already be back (e.g. a sheet closed).
             UiEvent::FocusLost if !self.chat.is_key() => self.chat.hide(),
             UiEvent::FocusLost => {}
             UiEvent::NewConversation => self.new_conversation(),
-            UiEvent::CheckForUpdates => self.check_for_updates(update::Asked::Banner),
-            UiEvent::Quit => {
-                pointer::release();
-                self.slack.save_cache();
-                NSApplication::sharedApplication(self.mtm).terminate(None);
-            }
+            UiEvent::Quit => self.quit(),
         }
+    }
+
+    fn quit(&mut self) {
+        pointer::release();
+        self.features_quit();
+        NSApplication::sharedApplication(self.mtm).terminate(None);
     }
 
     fn toggle_chat(&mut self) {
@@ -678,7 +641,7 @@ impl App {
         let fresh = self.fresh_conversation(&id);
         self.conversations.open(id.clone(), || fresh);
         self.update_chat_title();
-        let running = self.run.as_ref().is_some_and(|run| run.chat() == &id);
+        let running = self.is_running(&id);
         let has_plan = match id {
             ChatId::Action(index) => self.plan_of(index).is_some(),
             ChatId::Main | ChatId::Task(_) => false,

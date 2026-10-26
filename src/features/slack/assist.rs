@@ -17,8 +17,8 @@ use meow::superset::Project;
 
 use crate::ui::slack_assist::AssistView;
 
-use super::agents::Origin;
-use super::{App, now_secs};
+use super::{Slack, now_secs};
+use crate::app::feature::Host;
 
 /// Asked when the user clicks Ask with nothing typed.
 const DEFAULT_QUESTION: &str = "What is this conversation about, and what should I reply?";
@@ -79,35 +79,35 @@ pub(super) struct SlackAssist {
     pub(super) stage: Stage,
 }
 
-impl App {
+impl Slack {
     /// Asks Claude the typed question (or a default one) about the open conversation.
-    pub(super) fn ask_slack(&mut self) {
-        let typed = self.chat.slack().take_input();
+    pub(super) fn ask_slack(&mut self, host: &mut dyn Host) {
+        let typed = self.page().take_input();
         let question = match typed.trim() {
             "" => DEFAULT_QUESTION.to_string(),
             question => question.to_string(),
         };
-        self.start_help(Help::Ask, question);
+        self.start_help(Help::Ask, question, host);
     }
 
     /// Has Opus research the conversation with the user's tools and draft the reply.
-    pub(super) fn autocomplete_slack(&mut self) {
-        self.start_help(Help::Autocomplete, AUTOCOMPLETE_LABEL.to_string());
+    pub(super) fn autocomplete_slack(&mut self, host: &mut dyn Host) {
+        self.start_help(Help::Autocomplete, AUTOCOMPLETE_LABEL.to_string(), host);
     }
 
     /// Has Claude propose a coding agent for the open conversation, for the
     /// typed request or what the conversation asks.
-    pub(super) fn agent_slack(&mut self) {
-        let typed = self.chat.slack().take_input();
+    pub(super) fn agent_slack(&mut self, host: &mut dyn Host) {
+        let typed = self.page().take_input();
         let request = match typed.trim() {
             "" => DEFAULT_AGENT_REQUEST.to_string(),
             request => request.to_string(),
         };
-        self.start_help(Help::Agent, request);
+        self.start_help(Help::Agent, request, host);
     }
 
     /// Starts the proposed agent: a new worktree in Superset, opened in the app.
-    pub(super) fn start_slack_agent(&mut self) {
+    pub(super) fn start_slack_agent(&mut self, host: &mut dyn Host) {
         let Stage::AgentProposed { proposal, .. } = &self.slack_assist.stage else {
             return;
         };
@@ -116,17 +116,16 @@ impl App {
         };
         let proposal = proposal.clone();
         let request = self.slack_assist.question.clone();
-        self.slack_assist.stage =
-            match self.launch_agent(Origin::Slack { channel }, &request, &proposal) {
-                Ok(()) => Stage::Agent,
-                Err(error) => Stage::Answered(Err(error)),
-            };
-        self.render_slack_assist();
+        self.slack_assist.stage = match host.launch_slack_agent(&channel, &request, &proposal) {
+            Ok(()) => Stage::Agent,
+            Err(error) => Stage::Answered(Err(error)),
+        };
+        self.render_slack_assist(host);
     }
 
     /// Shows the agent followed for the conversation just opened, if any.
-    pub(super) fn show_slack_agent(&mut self, channel: &str) {
-        let Some(session) = self.slack_agent(channel) else {
+    pub(super) fn show_slack_agent(&mut self, channel: &str, host: &mut dyn Host) {
+        let Some(session) = host.slack_agent(channel) else {
             return;
         };
         self.slack_assist = SlackAssist {
@@ -136,16 +135,18 @@ impl App {
             stage: Stage::Agent,
             ..SlackAssist::default()
         };
-        self.render_slack_assist();
+        self.render_slack_assist(host);
     }
 
     /// Whether the panel shows the agent of conversation `channel`.
-    pub(super) fn slack_assist_shows_agent(&self, channel: &str) -> bool {
-        matches!(self.slack_assist.stage, Stage::Agent)
-            && self.slack_assist.channel.as_deref() == Some(channel)
+    /// Redraws Claude's panel when it follows a coding agent, which moved on.
+    pub(super) fn redraw_shown_agent(&mut self, host: &mut dyn Host) {
+        if matches!(self.slack_assist.stage, Stage::Agent) {
+            self.render_slack_assist(host);
+        }
     }
 
-    fn start_help(&mut self, help: Help, question: String) {
+    fn start_help(&mut self, help: Help, question: String, host: &mut dyn Host) {
         let Some(context) = self.slack.assist_context() else {
             return;
         };
@@ -155,16 +156,16 @@ impl App {
             lines: &context.lines,
             now: now_secs(),
             style: self.voice_guide_for_drafts(),
-            can_schedule: self.calendar.tools().is_some(),
+            can_schedule: host.calendar_tools().is_some(),
         };
-        let started = self.claude_env().and_then(|env| {
+        let started = claude_env(host).and_then(|env| {
             if help == Help::Agent {
-                self.superset_ready()?;
+                host.superset_ready()?;
             }
-            start_run(env, help, &ctx, &question, self.projects())
+            start_run(env, help, &ctx, &question, host.projects())
         });
         if help == Help::Agent {
-            self.discover_superset();
+            host.discover_superset();
         }
         // Replacing the state drops (and so cancels) any request still running.
         self.slack_assist = SlackAssist {
@@ -177,16 +178,7 @@ impl App {
             Ok(run) => self.slack_assist.run = Some(run),
             Err(error) => self.slack_assist.stage = Stage::Answered(Err(error)),
         }
-        self.render_slack_assist();
-    }
-
-    /// Claude, once discovered, or why it cannot run.
-    pub(super) fn claude_env(&self) -> Result<&ClaudeEnv, String> {
-        match &self.claude {
-            Some(Ok(env)) => Ok(env),
-            Some(Err(error)) => Err(format!("Claude is not available: {error}")),
-            None => Err("Claude is still starting; try again in a moment.".to_string()),
-        }
+        self.render_slack_assist(host);
     }
 
     /// Puts Claude's draft in the reply box; sending stays the user's call.
@@ -195,22 +187,22 @@ impl App {
             draft: Some(draft), ..
         })) = &self.slack_assist.stage
         {
-            self.chat.put_slack_draft(draft);
+            self.page().put_draft(draft);
         }
     }
 
     /// Hides the panel and stops any request still running.
     pub(super) fn close_slack_assist(&mut self) {
         self.slack_assist = SlackAssist::default();
-        self.chat.slack().hide_assist();
+        self.page().hide_assist();
     }
 
     pub(super) fn slack_assist_shown(&self) -> bool {
-        self.chat.slack().assist_shown()
+        self.page().assist_shown()
     }
 
     /// Collects the result of the run in flight and moves to the next stage.
-    pub(super) fn poll_slack_assist(&mut self) {
+    pub(super) fn poll_slack_assist(&mut self, host: &mut dyn Host) {
         loop {
             let Some(run) = &self.slack_assist.run else {
                 return;
@@ -227,7 +219,7 @@ impl App {
                 Ok(ClaudeEvent::Failed(reason)) => Err(reason),
                 Ok(ClaudeEvent::Tool(step)) => {
                     self.slack_assist.steps.push(step);
-                    self.render_slack_assist();
+                    self.render_slack_assist(host);
                     continue;
                 }
                 Ok(_) => continue,
@@ -235,56 +227,59 @@ impl App {
                 Err(TryRecvError::Disconnected) => Err("Claude stopped early.".to_string()),
             };
             self.slack_assist.run = None;
-            return self.on_help_result(outcome);
+            return self.on_help_result(outcome, host);
         }
     }
 
-    fn on_help_result(&mut self, outcome: Result<String, String>) {
+    fn on_help_result(&mut self, outcome: Result<String, String>, host: &mut dyn Host) {
         let result = match outcome {
             Ok(result) => result,
-            Err(error) => return self.answer(Err(error)),
+            Err(error) => return self.answer(Err(error), host),
         };
         match std::mem::take(&mut self.slack_assist.stage) {
             Stage::Thinking
                 if self.slack_assist.help == Help::Ask && calendar::wants_calendar(&result) =>
             {
-                self.start_calendar()
+                self.start_calendar(host)
             }
             Stage::Thinking if self.slack_assist.help == Help::Agent => {
-                self.on_agent_proposal(&result)
+                self.on_agent_proposal(&result, host)
             }
-            Stage::Thinking => self.answer(Ok(assist::parse(&result))),
-            Stage::Planning => self.on_planned(&result),
-            Stage::Creating { proposal, .. } => self.on_created(&result, proposal),
+            Stage::Thinking => self.answer(Ok(assist::parse(&result)), host),
+            Stage::Planning => self.on_planned(&result, host),
+            Stage::Creating { proposal, .. } => self.on_created(&result, proposal, host),
             other => self.slack_assist.stage = other,
         }
     }
 
     /// Shows the proposed agent, or Claude's question when it could not write one.
-    fn on_agent_proposal(&mut self, result: &str) {
+    fn on_agent_proposal(&mut self, result: &str, host: &mut dyn Host) {
         match agent::extract(result) {
             (note, Some(proposal)) => {
                 self.slack_assist.stage = Stage::AgentProposed { note, proposal };
-                self.render_slack_assist();
+                self.render_slack_assist(host);
             }
-            (answer, None) => self.answer(Ok(Reply {
-                answer,
-                draft: None,
-            })),
+            (answer, None) => self.answer(
+                Ok(Reply {
+                    answer,
+                    draft: None,
+                }),
+                host,
+            ),
         }
     }
 
     /// Shows Claude's answer, and puts its draft in the reply box.
-    pub(super) fn answer(&mut self, answer: Result<Reply, String>) {
+    pub(super) fn answer(&mut self, answer: Result<Reply, String>, host: &mut dyn Host) {
         self.slack_assist.stage = Stage::Answered(answer);
-        self.render_slack_assist();
+        self.render_slack_assist(host);
         self.fill_reply_with_draft();
     }
 
     /// Puts a fresh draft in the reply box, unless the user typed something
     /// there meanwhile ([ USE DRAFT ] still brings it in then).
     fn fill_reply_with_draft(&mut self) {
-        if self.assist_is_on_screen() && self.chat.slack().input_is_empty() {
+        if self.assist_is_on_screen() && self.page().input_is_empty() {
             self.use_slack_draft();
         }
     }
@@ -295,7 +290,7 @@ impl App {
             && self.slack_assist.channel.as_deref() == self.slack.open_channel()
     }
 
-    pub(super) fn render_slack_assist(&self) {
+    pub(super) fn render_slack_assist(&self, host: &mut dyn Host) {
         if !self.assist_is_on_screen() {
             return;
         }
@@ -318,9 +313,9 @@ impl App {
                 prompt: &proposal.prompt,
             },
             Stage::Agent => {
-                let Some(session) = state.channel.as_deref().and_then(|c| self.slack_agent(c))
+                let Some(session) = state.channel.as_deref().and_then(|c| host.slack_agent(c))
                 else {
-                    return self.chat.slack().hide_assist();
+                    return self.page().hide_assist();
                 };
                 let status = session.status_line();
                 let view = AssistView::Agent {
@@ -330,7 +325,7 @@ impl App {
                     status: &status,
                     message: session.messages.last().map(String::as_str),
                 };
-                return self.chat.slack().show_assist(&view);
+                return self.page().show_assist(&view);
             }
             Stage::Thinking => thinking("Reading the conversation…"),
             Stage::FindingPeople => thinking("Looking up who is in this conversation…"),
@@ -351,10 +346,10 @@ impl App {
                     attendees: &proposal.attendees,
                     creating: matches!(state.stage, Stage::Creating { .. }),
                 };
-                return self.chat.slack().show_assist(&view);
+                return self.page().show_assist(&view);
             }
         };
-        self.chat.slack().show_assist(&view);
+        self.page().show_assist(&view);
     }
 }
 
@@ -379,4 +374,9 @@ fn start_run(
             Run::start_read_only(env, &assist::autocomplete_prompt(ctx), STRONG_MODEL)
         }
     }
+}
+
+/// Claude, once discovered, or why it cannot run.
+pub(super) fn claude_env(host: &dyn Host) -> Result<&ClaudeEnv, String> {
+    host.claude_or_why()
 }

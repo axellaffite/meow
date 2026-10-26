@@ -330,7 +330,8 @@ pub fn text_button(
     target: &AnyObject,
     action: Sel,
 ) -> Retained<NSButton> {
-    // SAFETY: callers pass the app-lifetime controller and one of its actions.
+    // SAFETY: callers pass a target implementing `action` that outlives the button: the
+    // app-lifetime controller, or an `Action` its page keeps.
     let button = unsafe {
         NSButton::buttonWithTitle_target_action(
             &NSString::from_str(""),

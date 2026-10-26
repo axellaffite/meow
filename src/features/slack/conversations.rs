@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use meow::activity::{Kind, Link, Note};
+use meow::activity::{Activity, Kind, Link, Note};
 use meow::slack::assist::Line;
 use meow::slack::auth::Credentials;
 use meow::slack::cache::{self, SlackCache};
@@ -18,13 +18,14 @@ use meow::slack::model::{Channel, ChannelKind, Forwarded, Message, SlackImage};
 use meow::slack::timeline::{self, Author, Entry};
 use meow::source::Source;
 
+use crate::app::feature::Host;
 use crate::ui::emoji_text;
 use crate::ui::rich_text;
 use crate::ui::sidebar::Page;
 use crate::ui::signin::SignIn;
-use crate::ui::slack_page::{ConversationRow, SlackTab, TranscriptItem};
+use crate::ui::slack_page::{self, ConversationRow, SlackAction, SlackTab, TranscriptItem};
 
-use super::{App, now_secs};
+use super::{Slack, now_secs};
 
 /// The cache is written at most this often while Slack news keeps coming.
 const CACHE_SAVE_INTERVAL: Duration = Duration::from_secs(10);
@@ -311,21 +312,43 @@ impl SlackState {
         self.open.as_deref()
     }
 
-    fn name_of(&self, id: Option<&str>) -> String {
+    /// The saved messages of `channel`, oldest first.
+    pub(super) fn history(&self, channel: &str) -> &[Message] {
+        self.cache.history(channel)
+    }
+
+    /// `message` as text, for Claude.
+    pub(super) fn text_of(&self, message: &Message) -> String {
+        message_body(message, &self.names, Shown::Text)
+    }
+
+    pub(super) fn name_of(&self, id: Option<&str>) -> String {
         id.and_then(|id| self.names.users.get(id).cloned())
             .or_else(|| id.map(str::to_string))
             .unwrap_or_else(|| "someone".to_string())
     }
 }
 
-impl App {
-    /// Opens the Slack page, connecting state to the view.
-    pub(super) fn show_slack(&mut self) {
-        if !self.chat.is_visible() {
-            self.open_window();
+impl Slack {
+    /// A control of the Slack page.
+    pub(super) fn slack_action(&mut self, action: SlackAction, host: &mut dyn Host) {
+        match action {
+            SlackAction::SignIn => self.sign_in_slack(),
+            SlackAction::Tab(tab) => self.show_slack_tab(tab),
+            SlackAction::Open(row) => self.open_slack_conversation(row, host),
+            SlackAction::OpenThread(index) => self.open_slack_thread(index),
+            SlackAction::Back => self.slack_back(host),
+            SlackAction::Send => self.send_slack(),
+            SlackAction::Ask => self.ask_slack(host),
+            SlackAction::Autocomplete => self.autocomplete_slack(host),
+            SlackAction::Agent => self.agent_slack(host),
+            SlackAction::ToggleWriteAsMe => self.toggle_write_as_me(host),
+            SlackAction::LearnMyStyle => self.learn_my_style(host),
+            SlackAction::UseDraft => self.use_slack_draft(),
+            SlackAction::CreateEvent => self.create_slack_event(host),
+            SlackAction::CloseAssist => self.close_slack_assist(),
+            SlackAction::StartAgent => self.start_slack_agent(host),
         }
-        self.render_slack();
-        self.chat.show_page(Page::Slack);
     }
 
     pub(super) fn sign_in_slack(&mut self) {
@@ -336,8 +359,10 @@ impl App {
                 self.slack.connect(creds);
             }
             None => {
-                if self.slack.signin.is_none() {
-                    self.slack.signin = Some(SignIn::present(self.mtm));
+                if self.slack.signin.is_none()
+                    && let Some(mtm) = super::main_thread()
+                {
+                    self.slack.signin = Some(SignIn::present(mtm));
                 }
                 self.slack.status = Some("Finish signing in in the Slack window…".to_string());
             }
@@ -345,27 +370,33 @@ impl App {
         self.render_slack();
     }
 
-    pub(super) fn open_slack_conversation(&mut self, row: usize) {
-        if let Some(id) = self.chat.slack().id_at(row) {
-            self.open_slack_channel(id);
+    pub(super) fn open_slack_conversation(&mut self, row: usize, host: &mut dyn Host) {
+        if let Some(id) = self.page().id_at(row) {
+            self.open_slack_channel(id, host);
         }
     }
 
     /// Opens conversation `id` on the Slack page, on its latest messages.
-    pub(super) fn open_slack_channel(&mut self, id: String) {
-        self.open_slack_at(id, Vec::new());
+    pub(super) fn open_slack_channel(&mut self, id: String, host: &mut dyn Host) {
+        self.open_slack_at(id, Vec::new(), host);
     }
 
     /// Opens conversation `id` scrolled to message `ts` and marked. A reply in
     /// a thread opens that thread instead, over the conversation scrolled to
     /// the parent.
-    pub(super) fn open_slack_message(&mut self, id: String, ts: String, thread_ts: Option<String>) {
+    pub(super) fn open_slack_message(
+        &mut self,
+        id: String,
+        ts: String,
+        thread_ts: Option<String>,
+        host: &mut dyn Host,
+    ) {
         match thread_ts.filter(|parent| *parent != ts) {
             Some(parent) => {
-                self.open_slack_at(id, vec![parent.clone()]);
+                self.open_slack_at(id, vec![parent.clone()], host);
                 self.show_slack_thread(parent, vec![ts]);
             }
-            None => self.open_slack_at(id, vec![ts]),
+            None => self.open_slack_at(id, vec![ts], host),
         }
     }
 
@@ -409,12 +440,14 @@ impl App {
         }
     }
 
-    fn open_slack_at(&mut self, id: String, focus: Vec<String>) {
+    fn open_slack_at(&mut self, id: String, focus: Vec<String>, host: &mut dyn Host) {
         self.close_slack_assist();
         self.slack.open = Some(id.clone());
         self.slack.close_thread();
         self.slack.focus = focus;
-        self.read_slack_activity(&id);
+        host.read_activity(&|item: &Activity| {
+            matches!(&item.link, Some(Link::Slack { channel, .. }) if *channel == id)
+        });
         // What was last seen, until Slack sends the latest.
         self.slack.messages = self.slack.cache.history(&id).to_vec();
         // Opening marks it read (the worker tells Slack); reflect that at once.
@@ -423,7 +456,7 @@ impl App {
             channel.mentions = 0;
         }
         self.render_slack();
-        self.show_slack_agent(&id);
+        self.show_slack_agent(&id, host);
         if let Some(client) = &self.slack.client {
             client.send(Command::Open(id));
         }
@@ -431,12 +464,12 @@ impl App {
 
     /// Switches the conversation list to `tab`.
     pub(super) fn show_slack_tab(&mut self, tab: SlackTab) {
-        self.chat.slack().set_tab(tab);
+        self.page().set_tab(tab);
         self.render_slack();
     }
 
     /// Back from a thread to its conversation, or from a conversation to the list.
-    pub(super) fn slack_back(&mut self) {
+    pub(super) fn slack_back(&mut self, host: &mut dyn Host) {
         self.close_slack_assist();
         if self.slack.thread.is_some() {
             self.slack.close_thread();
@@ -450,11 +483,11 @@ impl App {
         self.slack.open = None;
         self.slack.focus.clear();
         self.render_slack();
-        self.chat.show_page(Page::Slack);
+        host.open_page(Page::Feature(slack_page::PAGE_ID));
     }
 
     pub(super) fn send_slack(&mut self) {
-        let text = self.chat.slack().take_input();
+        let text = self.page().take_input();
         let text = text.trim();
         if text.is_empty() {
             return;
@@ -472,20 +505,20 @@ impl App {
     }
 
     /// Drains the sign-in flow and everything the worker has sent since last tick.
-    pub(super) fn poll_slack(&mut self) {
-        self.poll_sign_in();
+    pub(super) fn poll_slack(&mut self, host: &mut dyn Host) {
+        self.poll_sign_in(host);
         let events: Vec<Event> = match &self.slack.client {
             Some(client) => client.events.try_iter().collect(),
             None => return,
         };
         for event in events {
-            self.on_slack_event(event);
+            self.on_slack_event(event, host);
         }
         self.slack.save_cache_soon();
     }
 
     /// Advances an in-progress web sign-in; connects once it yields credentials.
-    fn poll_sign_in(&mut self) {
+    fn poll_sign_in(&mut self, host: &mut dyn Host) {
         if self.slack.signin.is_none() {
             return;
         }
@@ -495,7 +528,7 @@ impl App {
             self.slack.signin = None;
             if !self.slack.signed_in {
                 self.slack.status = Some("Sign in with your usual Slack login.".to_string());
-                if self.slack_visible() {
+                if self.slack_visible(host) {
                     self.render_slack();
                 }
             }
@@ -511,13 +544,13 @@ impl App {
             }
             self.slack.saved_session = true;
             self.slack.connect(credentials);
-            if self.slack_visible() {
+            if self.slack_visible(host) {
                 self.render_slack();
             }
         }
     }
 
-    fn on_slack_event(&mut self, event: Event) {
+    fn on_slack_event(&mut self, event: Event, host: &mut dyn Host) {
         match event {
             Event::Connected(auth) => {
                 self.slack.signed_in = true;
@@ -558,21 +591,21 @@ impl App {
             Event::New { channel, messages } => {
                 self.slack.cache.append(&channel, &messages);
                 self.slack.cache_dirty = true;
-                self.notify_slack(&channel, &messages);
+                self.notify_slack(&channel, &messages, &[], host);
+                let from_others = messages
+                    .iter()
+                    .any(|m| m.user.as_deref() != self.slack.me.as_deref());
                 if self.slack.open.as_deref() == Some(&channel) {
-                    let from_others = messages
-                        .iter()
-                        .any(|m| m.user.as_deref() != self.slack.me.as_deref());
                     self.slack.messages.extend(messages);
                     // Something new: show the latest again, unless reading a thread.
                     if self.slack.thread.is_none() {
                         self.slack.focus.clear();
                     }
-                    if from_others && !self.slack_visible() {
-                        self.unread = true;
+                    if from_others && !self.slack_visible(host) {
+                        host.alert();
                     }
-                } else {
-                    self.unread = true;
+                } else if from_others {
+                    host.alert();
                 }
             }
             Event::Thread {
@@ -590,6 +623,14 @@ impl App {
                     self.slack.thread_messages = messages;
                 }
             }
+            Event::Replies {
+                channel,
+                thread,
+                fresh,
+            } => {
+                self.autopilot_thread_changed(&channel, &thread);
+                self.notify_slack(&channel, &fresh, &thread, host);
+            }
             Event::Sent { .. } => {}
             Event::Error(message) => {
                 if self.slack.signed_in {
@@ -598,9 +639,9 @@ impl App {
                     self.slack.status = Some(message);
                 }
             }
-            Event::MyMessages(result) => self.on_my_messages(result),
+            Event::MyMessages(result) => self.on_my_messages(result, host),
             Event::CustomEmoji(raw) => self.on_custom_emoji(&raw),
-            Event::People { channel, people } => self.on_people(channel, people),
+            Event::People { channel, people } => self.on_people(channel, people, host),
             Event::Expired => {
                 self.close_slack_assist();
                 self.slack.signed_in = false;
@@ -613,7 +654,7 @@ impl App {
                 self.slack.status = Some("Your Slack session ended. Sign in again.".to_string());
             }
         }
-        if self.slack_visible() {
+        if self.slack_visible(host) {
             self.render_slack();
         }
     }
@@ -621,16 +662,14 @@ impl App {
     /// Draws the Slack page for the current state: signed out, a list, or a chat.
     pub(super) fn render_slack(&mut self) {
         if !self.slack.signed_in && !self.slack.showing_cached() {
-            self.chat
-                .slack()
-                .show_signed_out(self.slack.status.as_deref());
+            self.page().show_signed_out(self.slack.status.as_deref());
             return;
         }
         if self.slack.open.is_some() {
             let messages = self.slack.shown().to_vec();
             self.want_images(&messages);
         }
-        let page = self.chat.slack();
+        let page = self.page();
         match &self.slack.open {
             Some(_) => page.render_conversation(
                 self.slack.thread.is_some(),
@@ -647,8 +686,20 @@ impl App {
     }
 
     /// A DM or a mention from someone else, out of sight, goes to Activity.
-    fn notify_slack(&mut self, channel: &str, messages: &[Message]) {
-        let watching = self.slack_visible() && self.slack.open.as_deref() == Some(channel);
+    /// `thread` is the whole thread when `messages` are replies in it.
+    fn notify_slack(
+        &mut self,
+        channel: &str,
+        messages: &[Message],
+        thread: &[Message],
+        host: &mut dyn Host,
+    ) {
+        // Replies are in sight only in their own thread.
+        let in_sight = thread
+            .first()
+            .is_none_or(|parent| self.slack.thread.as_deref() == Some(parent.ts.as_str()));
+        let watching =
+            in_sight && self.slack_visible(host) && self.slack.open.as_deref() == Some(channel);
         let Some(conversation) = self.slack.channels.iter().find(|c| c.id == channel) else {
             return;
         };
@@ -659,9 +710,6 @@ impl App {
             .filter(|m| is_for_me(conversation.kind, &m.text, me))
             .collect();
         let Some(last) = for_me.last() else { return };
-        if watching {
-            return;
-        }
         let sender = self.slack.name_of(last.user.as_deref());
         let place = channel_title(conversation, &self.slack.names);
         let mut title = if conversation.kind == ChannelKind::Im {
@@ -669,16 +717,22 @@ impl App {
         } else {
             format!("{sender} in {place}")
         };
+        // Even when reading it: preparing the work is what saves time.
+        let last = (*last).clone();
+        self.consider_for_autopilot(channel, &last, &title, thread);
+        if watching {
+            return;
+        }
         if for_me.len() > 1 {
             title.push_str(&format!(" ({} messages)", for_me.len()));
         }
-        let detail = message_body(last, &self.slack.names, Shown::Text);
+        let detail = message_body(&last, &self.slack.names, Shown::Text);
         // One item per sender and conversation: their last message replaces the earlier ones.
         let key = format!(
             "slack:{channel}:{}",
             last.user.as_deref().unwrap_or_default()
         );
-        self.notify(Note {
+        host.record(Note {
             kind: Kind::Slack,
             title,
             detail: Some(detail),
@@ -693,12 +747,8 @@ impl App {
     }
 
     /// Whether a Slack conversation (not the list) is on screen.
-    pub(super) fn slack_conversation_shown(&self) -> bool {
-        self.slack_visible() && self.slack.open.is_some()
-    }
-
-    fn slack_visible(&self) -> bool {
-        self.chat.is_visible() && self.chat.page() == Page::Slack
+    pub(super) fn slack_conversation_shown(&self, host: &mut dyn Host) -> bool {
+        self.slack_visible(host) && self.slack.open.is_some()
     }
 }
 

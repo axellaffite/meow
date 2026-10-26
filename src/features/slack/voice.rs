@@ -9,14 +9,13 @@ use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 
 use meow::claude::{ClaudeEvent, Run, STRONG_MODEL};
-use meow::settings::Settings;
 use meow::slack::client::Command;
 use meow::slack::voice;
 
-use crate::ui::sidebar::Page;
 use crate::ui::slack_voice_bar::VoiceBarState;
 
-use super::App;
+use super::{Slack, SlackSettings};
+use crate::app::feature::Host;
 
 /// Where learning is.
 enum Learning {
@@ -58,12 +57,23 @@ impl VoiceState {
         }
     }
 
+    /// No guide and no file, for tests.
+    #[cfg(test)]
+    pub(super) fn empty() -> Self {
+        Self {
+            path: None,
+            guide: None,
+            learning: Learning::Idle,
+            status: String::new(),
+        }
+    }
+
     fn busy(&self) -> bool {
         !matches!(self.learning, Learning::Idle)
     }
 }
 
-impl App {
+impl Slack {
     /// The guide Claude should follow for drafts, when "write as me" is on.
     pub(super) fn voice_guide_for_drafts(&self) -> Option<&str> {
         if self.settings.write_as_me {
@@ -84,17 +94,17 @@ impl App {
 
     /// Turns drafting in the user's style on or off; turning it on before any
     /// guide exists learns one first.
-    pub(super) fn toggle_write_as_me(&mut self) {
+    pub(super) fn toggle_write_as_me(&mut self, host: &mut dyn Host) {
         let on = !(self.settings.write_as_me && self.voice.guide.is_some());
-        self.save_write_as_me(on);
+        self.save_write_as_me(on, host);
         if on && self.voice.guide.is_none() && !self.voice.busy() {
-            self.learn_my_style();
+            self.learn_my_style(host);
         }
-        self.refresh_voice_bar();
+        self.refresh_voice_bar(host);
     }
 
     /// Fetches the user's recent messages to (re)learn their style.
-    pub(super) fn learn_my_style(&mut self) {
+    pub(super) fn learn_my_style(&mut self, host: &mut dyn Host) {
         if self.voice.busy() {
             return;
         }
@@ -105,48 +115,52 @@ impl App {
             limit: voice::SAMPLE_SIZE,
         }) {
             self.voice.status = "Sign in to Slack first.".to_string();
-            self.refresh_voice_bar();
+            self.refresh_voice_bar(host);
             return;
         }
         self.voice.learning = Learning::Fetching;
         self.voice.status = format!("Reading your last {} messages…", voice::SAMPLE_SIZE);
-        self.refresh_voice_bar();
+        self.refresh_voice_bar(host);
     }
 
     /// The worker's answer to [`Command::FetchMyMessages`].
-    pub(super) fn on_my_messages(&mut self, result: Result<Vec<String>, String>) {
+    pub(super) fn on_my_messages(
+        &mut self,
+        result: Result<Vec<String>, String>,
+        host: &mut dyn Host,
+    ) {
         if !matches!(self.voice.learning, Learning::Fetching) {
             return;
         }
         let messages = match result {
             Ok(messages) if messages.is_empty() => {
-                return self
-                    .finish_learning(Err("Found none of your messages to learn from.".into()));
+                return self.finish_learning(
+                    Err("Found none of your messages to learn from.".into()),
+                    host,
+                );
             }
             Ok(messages) => messages,
             Err(error) => {
-                return self.finish_learning(Err(format!("Could not read your messages: {error}")));
+                return self
+                    .finish_learning(Err(format!("Could not read your messages: {error}")), host);
             }
         };
         let prompt = voice::learn_prompt(&self.slack.my_name(), &messages);
-        let started = match &self.claude {
-            Some(Ok(env)) => Run::start_offline_on(env, &prompt, STRONG_MODEL),
-            Some(Err(error)) => Err(format!("Claude is not available: {error}")),
-            None => Err("Claude is still starting; try again in a moment.".to_string()),
-        };
+        let started = super::assist::claude_env(host)
+            .and_then(|env| Run::start_offline_on(env, &prompt, STRONG_MODEL));
         match started {
             Ok(run) => {
                 let count = messages.len();
                 self.voice.learning = Learning::Writing { run, count };
                 self.voice.status = format!("Learning your style from {count} messages…");
-                self.refresh_voice_bar();
+                self.refresh_voice_bar(host);
             }
-            Err(error) => self.finish_learning(Err(error)),
+            Err(error) => self.finish_learning(Err(error), host),
         }
     }
 
     /// Collects the guide once Opus has written it.
-    pub(super) fn poll_voice(&mut self) {
+    pub(super) fn poll_voice(&mut self, host: &mut dyn Host) {
         loop {
             let Learning::Writing { run, count } = &self.voice.learning else {
                 return;
@@ -166,11 +180,11 @@ impl App {
                 Err(TryRecvError::Empty) => return,
                 Err(TryRecvError::Disconnected) => Err("Claude stopped early.".to_string()),
             };
-            return self.finish_learning(outcome);
+            return self.finish_learning(outcome, host);
         }
     }
 
-    fn finish_learning(&mut self, outcome: Result<(String, usize), String>) {
+    fn finish_learning(&mut self, outcome: Result<(String, usize), String>, host: &mut dyn Host) {
         self.voice.learning = Learning::Idle;
         let saved = outcome.and_then(|(guide, count)| {
             let path = self
@@ -185,28 +199,26 @@ impl App {
             Ok((guide, count, path)) => {
                 self.voice.guide = Some(guide.trim().to_string());
                 self.voice.status = format!("Learned from {count} messages: {}", path.display());
-                self.save_write_as_me(true);
+                self.save_write_as_me(true, host);
             }
             Err(error) => self.voice.status = error,
         }
-        self.refresh_voice_bar();
+        self.refresh_voice_bar(host);
     }
 
-    fn save_write_as_me(&mut self, on: bool) {
-        self.settings = Settings {
+    fn save_write_as_me(&mut self, on: bool, host: &mut dyn Host) {
+        self.settings = SlackSettings {
             write_as_me: on,
             ..self.settings.clone()
         };
-        if let Some(path) = &self.settings_path
-            && let Err(error) = self.settings.save(path)
-        {
+        if let Err(error) = host.settings().set(&self.settings) {
             eprintln!("meow: {error}");
         }
     }
 
-    fn refresh_voice_bar(&self) {
-        if self.chat.is_visible() && self.chat.page() == Page::Slack {
-            self.chat.slack().render_voice(&self.voice_bar_state());
+    fn refresh_voice_bar(&self, host: &mut dyn Host) {
+        if self.slack_visible(host) {
+            self.page().render_voice(&self.voice_bar_state());
         }
     }
 }

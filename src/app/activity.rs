@@ -102,24 +102,18 @@ impl App {
         else {
             return;
         };
+        if self.features_open_link(&link) {
+            return;
+        }
         match link {
-            Link::Slack {
-                channel,
-                ts,
-                thread_ts,
-            } => {
-                self.show_slack();
-                match ts {
-                    Some(ts) => self.open_slack_message(channel, ts, thread_ts),
-                    None => self.open_slack_channel(channel),
-                }
-            }
             Link::Plan { action } => {
                 if let Some(index) = self.actions.iter().position(|a| a.title == action) {
                     self.show_conversation(ChatId::Action(index));
                 }
             }
             Link::Tasks => self.chat.show_page(Page::Tasks),
+            // Shown by the features that have them.
+            Link::Slack { .. } | Link::Autopilot => {}
             Link::Url { url } => open_url(&url),
         }
     }
@@ -132,9 +126,9 @@ impl App {
         }
     }
 
-    /// Opening a Slack conversation reads its news.
-    pub(super) fn read_slack_activity(&mut self, channel: &str) {
-        let about = |item: &activity::Activity| matches!(&item.link, Some(Link::Slack { channel: c, .. }) if c == channel);
+    /// Marks the items `about` matches as read, e.g. a Slack conversation's
+    /// news once it is opened.
+    pub(super) fn read_activity(&mut self, about: &dyn Fn(&activity::Activity) -> bool) {
         if self.activity.log.mark_read_where(about) {
             self.activity_changed();
         }
@@ -196,5 +190,6 @@ fn kind_name(kind: Kind) -> &'static str {
         Kind::Calendar => "Calendar",
         Kind::Tasks => "Tasks",
         Kind::Scheduled => "Scheduled",
+        Kind::Autopilot => "Autopilot",
     }
 }

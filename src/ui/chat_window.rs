@@ -5,7 +5,6 @@ use std::cell::{Cell, RefCell};
 
 use meow::actions::QuickAction;
 use meow::activity::ActivityLog;
-use meow::routines::Routines;
 use meow::tasks::TaskList;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
@@ -13,7 +12,7 @@ use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSAutoresizingMaskOptions,
     NSBitmapImageFileType, NSButton, NSColor, NSLineBreakMode, NSStatusWindowLevel,
-    NSTextAlignment, NSTextField, NSView, NSWindowCollectionBehavior,
+    NSTextAlignment, NSTextField, NSView, NSWindowCollectionBehavior, NSWindowOrderingMode,
 };
 use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
@@ -23,13 +22,27 @@ use super::chat_page::ChatPage;
 use super::controller::Controller;
 use super::plan_page::PlanPage;
 use super::rich_text::{self, Attributes};
-use super::routines_page::RoutinesPage;
 use super::screens;
-use super::sidebar::{self, Page, Selection, Sidebar};
-use super::slack_page::SlackPage;
+use super::sidebar::{self, Page, PageSpec, Selection, Sidebar};
 use super::task_page::TaskPage;
 use super::theme;
 use super::widgets;
+
+/// What a feature builds its page with (see `Feature::build_page`).
+pub struct PageKit<'a> {
+    pub mtm: MainThreadMarker,
+    /// Where the page goes in the bubble.
+    pub frame: NSRect,
+    /// The text fields' delegate, for Esc and ⇧ Return.
+    pub controller: &'a Retained<Controller>,
+}
+
+/// A feature's page: its view, and the field to type in when it is shown.
+pub struct PageView {
+    pub view: Retained<NSView>,
+    /// Focused when the page shows, unless hidden then.
+    pub focus: Option<Retained<NSView>>,
+}
 
 const WIDTH: f64 = 620.0;
 const HEIGHT: f64 = 470.0;
@@ -42,14 +55,21 @@ const SUBTITLE_GAP: f64 = 16.0;
 
 pub struct ChatWindow {
     panel: Retained<BubblePanel>,
+    /// The size picked in the settings, while the bubble is shrunk to fit a
+    /// smaller screen; restored the next time it opens.
+    unfitted: Cell<Option<NSSize>>,
     bubble: Retained<BubbleView>,
     sidebar: Sidebar,
     chat: ChatPage,
     tasks: TaskPage,
     plan: PlanPage,
-    slack: SlackPage,
     activity: ActivityPage,
-    routines: RoutinesPage,
+    /// The features' pages, as listed in the sidebar.
+    feature_pages: Vec<PageSpec>,
+    /// Their views once built, by page id (see `add_page`).
+    feature_views: RefCell<Vec<(&'static str, PageView)>>,
+    /// Where pages go in the bubble.
+    page_frame: NSRect,
     page: Cell<Page>,
     /// Top line of the page: "Chat", "Tasks", or the task being discussed.
     header: Retained<NSTextField>,
@@ -66,10 +86,13 @@ pub struct ChatWindow {
 }
 
 impl ChatWindow {
+    /// The bubble, with a sidebar row for each of the features' `pages`; their
+    /// views come next, with `add_page`.
     pub fn new(
         mtm: MainThreadMarker,
         controller: &Retained<Controller>,
         actions: &[QuickAction],
+        pages: &[PageSpec],
     ) -> Self {
         let panel = make_panel(mtm);
         let bubble = BubbleView::new(mtm, rect(0.0, 0.0, WIDTH, HEIGHT));
@@ -82,7 +105,7 @@ impl ChatWindow {
         panel.setDelegate(Some(ProtocolObject::from_ref(&**controller)));
 
         let inner = bubble.content_rect();
-        let sidebar = Sidebar::new(mtm, controller, actions, inner);
+        let sidebar = Sidebar::new(mtm, controller, actions, pages, inner);
         bubble.addSubview(&sidebar.view);
         bubble.set_sidebar_right(inner.origin.x + sidebar::WIDTH);
 
@@ -97,15 +120,11 @@ impl ChatWindow {
         let chat = ChatPage::new(mtm, controller, page_frame);
         let tasks = TaskPage::new(mtm, controller, page_frame);
         let plan = PlanPage::new(mtm, controller, page_frame);
-        let slack = SlackPage::new(mtm, controller, page_frame);
         let activity = ActivityPage::new(mtm, controller, page_frame);
-        let routines = RoutinesPage::new(mtm, controller, page_frame);
         bubble.addSubview(&chat.view);
         bubble.addSubview(&tasks.view);
         bubble.addSubview(&plan.view);
-        bubble.addSubview(&slack.view);
         bubble.addSubview(&activity.view);
-        bubble.addSubview(&routines.view);
         bubble.addSubview(&close_button(mtm, controller, inner));
         let header = NSTextField::labelWithString(&NSString::from_str(""), mtm);
         header.setFrame(rect(
@@ -149,14 +168,16 @@ impl ChatWindow {
 
         let window = Self {
             panel,
+            unfitted: Cell::new(None),
             bubble,
             sidebar,
             chat,
             tasks,
             plan,
-            slack,
             activity,
-            routines,
+            feature_pages: pages.to_vec(),
+            feature_views: RefCell::new(Vec::new()),
+            page_frame,
             page: Cell::new(Page::Chat),
             header,
             subtitle,
@@ -183,22 +204,30 @@ impl ChatWindow {
         &self.plan
     }
 
-    pub fn slack(&self) -> &SlackPage {
-        &self.slack
-    }
-
     pub fn activity(&self) -> &ActivityPage {
         &self.activity
     }
 
-    pub fn routines(&self) -> &RoutinesPage {
-        &self.routines
+    /// Where a page's view goes in the bubble, for `add_page`.
+    pub fn page_frame(&self) -> NSRect {
+        self.page_frame
     }
 
-    /// Redraws the Scheduled page and the active count in the sidebar.
-    pub fn render_routines(&self, routines: &Routines, running: Option<u64>, now: u64) {
-        self.routines.render(routines, running, now);
-        self.sidebar.set_active_routines(routines.active_count());
+    /// Puts feature page `id` in the bubble, hidden until shown. It goes
+    /// under the app's pages, so never over the header or close button.
+    pub fn add_page(&self, id: &'static str, page: PageView) {
+        page.view.setHidden(self.page() != Page::Feature(id));
+        self.bubble.addSubview_positioned_relativeTo(
+            &page.view,
+            NSWindowOrderingMode::Below,
+            Some(&self.chat.view),
+        );
+        self.feature_views.borrow_mut().push((id, page));
+    }
+
+    /// The count at the end of feature page `id`'s row in the sidebar.
+    pub fn set_badge(&self, id: &str, count: usize) {
+        self.sidebar.set_badge(id, count);
     }
 
     pub fn set_unread_activity(&self, count: usize) {
@@ -209,11 +238,6 @@ impl ChatWindow {
     pub fn render_activity(&self, log: &ActivityLog, now: u64) {
         self.activity.render(log, now);
         self.sidebar.set_unread_activity(log.unread_count());
-    }
-
-    /// Puts a draft in the Slack reply box and focuses it.
-    pub fn put_slack_draft(&self, text: &str) {
-        self.slack.set_input(text, &self.panel);
     }
 
     pub fn is_visible(&self) -> bool {
@@ -234,9 +258,10 @@ impl ChatWindow {
         self.chat.view.setHidden(page != Page::Chat);
         self.tasks.view.setHidden(page != Page::Tasks);
         self.plan.view.setHidden(page != Page::Plan);
-        self.slack.view.setHidden(page != Page::Slack);
         self.activity.view.setHidden(page != Page::Activity);
-        self.routines.view.setHidden(page != Page::Routines);
+        for (id, feature) in self.feature_views.borrow().iter() {
+            feature.view.setHidden(page != Page::Feature(id));
+        }
         self.refresh_header();
         self.focus();
     }
@@ -252,9 +277,12 @@ impl ChatWindow {
                 self.can_run.get(),
             ),
             Page::Tasks => (self.tasks_title.borrow().clone(), Selection::Tasks, false),
-            Page::Slack => ("Slack".to_string(), Selection::Slack, false),
             Page::Activity => ("Activity".to_string(), Selection::Activity, false),
-            Page::Routines => ("Scheduled".to_string(), Selection::Routines, false),
+            Page::Feature(id) => {
+                let spec = self.feature_pages.iter().find(|spec| spec.id == id);
+                let title = spec.map_or(id, |spec| spec.title).to_string();
+                (title, Selection::Feature(id), false)
+            }
         };
         self.sidebar.select(selection);
         self.run_button.setHidden(!can_run);
@@ -329,9 +357,20 @@ impl ChatWindow {
             Page::Chat => self.chat.focus(&self.panel),
             Page::Tasks => self.tasks.focus(&self.panel),
             Page::Plan => self.plan.focus(&self.panel),
-            Page::Slack => self.slack.focus(&self.panel),
             // Nothing to type into: the bubble itself keeps the focus.
-            Page::Activity | Page::Routines => {}
+            Page::Activity => {}
+            Page::Feature(id) => self.focus_feature(id),
+        }
+    }
+
+    fn focus_feature(&self, id: &str) {
+        let views = self.feature_views.borrow();
+        let field = views
+            .iter()
+            .find(|(page, _)| *page == id)
+            .and_then(|(_, page)| page.focus.as_ref());
+        if let Some(field) = field.filter(|field| !field.isHidden()) {
+            self.panel.makeFirstResponder(Some(field));
         }
     }
 
@@ -345,16 +384,40 @@ impl ChatWindow {
         }
     }
 
+    /// Sets the bubble's size (`width`, `height` in points); it is fitted to
+    /// the screen when it opens.
+    pub fn set_size(&self, (width, height): (f64, f64)) {
+        self.unfitted.set(None);
+        self.panel.setContentSize(NSSize::new(width, height));
+    }
+
     /// Opens the bubble just above `anchor` (the cat), kept on screen, with
     /// its tail pointing at the cat.
     pub fn show_above(&self, anchor: NSRect, mtm: MainThreadMarker) {
-        let size = self.panel.frame().size;
+        if let Some(wanted) = self.unfitted.take() {
+            self.panel.setContentSize(wanted);
+        }
+        let mut size = self.panel.frame().size;
         let cat_center = anchor.origin.x + anchor.size.width / 2.0;
         let mut x = cat_center - size.width / 2.0;
         let mut y = anchor.origin.y + anchor.size.height;
         let anchor_center = NSPoint::new(cat_center, anchor.origin.y + anchor.size.height / 2.0);
         if let Some(screen) = screens::showing(mtm, anchor_center) {
             let visible = screen.visibleFrame();
+            // A big bubble on a small screen shrinks to fit above the cat.
+            let room = NSSize::new(
+                visible.size.width,
+                visible.origin.y + visible.size.height - y,
+            );
+            if size.width > room.width || size.height > room.height {
+                self.unfitted.set(Some(size));
+                size = NSSize::new(
+                    size.width.min(room.width).max(MIN_SIZE.width),
+                    size.height.min(room.height).max(MIN_SIZE.height),
+                );
+                self.panel.setContentSize(size);
+            }
+            x = cat_center - size.width / 2.0;
             x = x.clamp(
                 visible.origin.x,
                 visible.origin.x + visible.size.width - size.width,

@@ -31,11 +31,23 @@ pub enum Change {
         thread_ts: Option<String>,
         /// Whether a message already shown changed, rather than a new one.
         edited: bool,
+        /// The message itself, when it is a new one.
+        posted: Option<Posted>,
     },
     /// The user read a conversation somewhere, so its unread state moved.
     Read { channel: String },
     /// The user joined, left or opened a conversation.
     Conversations,
+}
+
+/// A new message as the frame shows it: enough to tell whether it is for the
+/// user before fetching anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Posted {
+    pub ts: String,
+    pub user: Option<String>,
+    /// Raw `mrkdwn`, mentions as `<@U123>`.
+    pub text: String,
 }
 
 /// The change a text frame announces, if any Meow shows.
@@ -55,10 +67,16 @@ pub fn parse(text: &str) -> Option<Change> {
                 .into_iter()
                 .find_map(|m| m["thread_ts"].as_str())
                 .map(str::to_string);
+            let posted = frame["ts"].as_str().filter(|_| !edited).map(|ts| Posted {
+                ts: ts.to_string(),
+                user: frame["user"].as_str().map(str::to_string),
+                text: frame["text"].as_str().unwrap_or_default().to_string(),
+            });
             Some(Change::Message {
                 channel: channel()?,
                 thread_ts,
                 edited,
+                posted,
             })
         }
         "channel_marked" | "group_marked" | "im_marked" | "mpim_marked" => Some(Change::Read {
@@ -194,6 +212,16 @@ mod tests {
             channel: channel.into(),
             thread_ts: thread_ts.map(Into::into),
             edited,
+            posted: None,
+        })
+    }
+
+    fn posted(channel: &str, thread_ts: Option<&str>, posted: Posted) -> Option<Change> {
+        Some(Change::Message {
+            channel: channel.into(),
+            thread_ts: thread_ts.map(Into::into),
+            edited: false,
+            posted: Some(posted),
         })
     }
 
@@ -204,15 +232,25 @@ mod tests {
     }
 
     #[test]
-    fn a_new_message_names_its_conversation() {
+    fn a_new_message_says_who_wrote_what() {
         let frame = r#"{"type":"message","channel":"D1","user":"U2","text":"hi","ts":"2.0"}"#;
-        assert_eq!(parse(frame), message("D1", None, false));
+        let hi = Posted {
+            ts: "2.0".into(),
+            user: Some("U2".into()),
+            text: "hi".into(),
+        };
+        assert_eq!(parse(frame), posted("D1", None, hi));
     }
 
     #[test]
     fn a_reply_names_its_thread() {
         let frame = r#"{"type":"message","channel":"C1","ts":"3.0","thread_ts":"1.0"}"#;
-        assert_eq!(parse(frame), message("C1", Some("1.0"), false));
+        let reply = Posted {
+            ts: "3.0".into(),
+            user: None,
+            text: String::new(),
+        };
+        assert_eq!(parse(frame), posted("C1", Some("1.0"), reply));
     }
 
     #[test]

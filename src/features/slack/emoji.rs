@@ -3,6 +3,7 @@
 //! are downloaded only when they show up in an open conversation, into a
 //! cache on disk that later launches reuse.
 
+use crate::app::feature::Host;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -13,7 +14,7 @@ use meow::slack::model::Message;
 use crate::ui::emoji_text::{EmojiGlyph, ImageGlyph};
 use crate::ui::picture::Picture;
 
-use super::App;
+use super::Slack;
 use super::downloads::{Download, Downloader};
 
 /// Keys of image downloads start with this, emoji keys never do (`:` ends a name).
@@ -32,7 +33,7 @@ pub(super) struct EmojiState {
     downloader: Option<Downloader>,
 }
 
-impl App {
+impl Slack {
     /// The worker sent the workspace's custom emoji.
     pub(super) fn on_custom_emoji(&mut self, raw: &HashMap<String, String>) {
         let custom = emoji::resolve(raw);
@@ -92,7 +93,7 @@ impl App {
     }
 
     /// Takes in finished downloads, and redraws the conversation once some are.
-    pub(super) fn poll_emoji(&mut self) {
+    pub(super) fn poll_emoji(&mut self, host: &mut dyn Host) {
         let Some(downloader) = &self.emoji.downloader else {
             return;
         };
@@ -114,15 +115,15 @@ impl App {
                 (_, Err(error)) => eprintln!("meow: slack: {key} unavailable: {error}"),
             }
         }
-        if self.slack_conversation_shown() {
+        if self.slack_conversation_shown(host) {
             self.render_slack();
         }
     }
 
     /// Plays the animated emoji and images of the open conversation.
-    pub(super) fn animate_slack(&self) {
-        if self.slack_conversation_shown() {
-            self.chat.slack().animate();
+    pub(super) fn animate_slack(&self, host: &mut dyn Host) {
+        if self.slack_conversation_shown(host) {
+            self.page().animate();
         }
     }
 }

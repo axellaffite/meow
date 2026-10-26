@@ -11,6 +11,8 @@ use objc2_foundation::{NSNotification, NSString};
 
 use super::events::{UiEvent, push};
 use super::rich_text;
+use super::sidebar::Page;
+use super::{autopilot_page, slack_page};
 
 define_class!(
     #[unsafe(super(NSObject))]
@@ -47,24 +49,6 @@ define_class!(
             }
         }
 
-        /// Theme menu items: the sender's tag is the coat index.
-        #[unsafe(method(setCoat:))]
-        fn set_coat(&self, sender: Option<&AnyObject>) {
-            if let Some(index) = sender_tag(sender) {
-                push(UiEvent::SetCoat(index));
-            }
-        }
-
-        #[unsafe(method(addCoatFromPhoto:))]
-        fn add_coat_from_photo(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::AddCoatFromPhoto);
-        }
-
-        #[unsafe(method(removeCoat:))]
-        fn remove_coat(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::RemoveCoat);
-        }
-
         #[unsafe(method(feed:))]
         fn feed(&self, _sender: Option<&AnyObject>) {
             push(UiEvent::Feed);
@@ -73,11 +57,6 @@ define_class!(
         #[unsafe(method(releaseMouse:))]
         fn release_mouse(&self, _sender: Option<&AnyObject>) {
             push(UiEvent::ReleaseMouse);
-        }
-
-        #[unsafe(method(checkForUpdates:))]
-        fn check_for_updates(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::CheckForUpdates);
         }
 
         #[unsafe(method(coughUp:))]
@@ -97,85 +76,7 @@ define_class!(
 
         #[unsafe(method(showSlack:))]
         fn show_slack(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::ShowSlack);
-        }
-
-        #[unsafe(method(signInSlack:))]
-        fn sign_in_slack(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::SignInSlack);
-        }
-
-        /// Slack conversation rows: the sender's tag is the row index.
-        #[unsafe(method(showSlackDirect:))]
-        fn show_slack_direct(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::SlackTab(super::slack_page::SlackTab::Direct));
-        }
-
-        #[unsafe(method(showSlackChannels:))]
-        fn show_slack_channels(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::SlackTab(super::slack_page::SlackTab::Channels));
-        }
-
-        #[unsafe(method(openSlack:))]
-        fn open_slack(&self, sender: Option<&AnyObject>) {
-            if let Some(row) = sender_tag(sender) {
-                push(UiEvent::OpenSlackConversation(row));
-            }
-        }
-
-        #[unsafe(method(slackBack:))]
-        fn slack_back(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::SlackBack);
-        }
-
-        #[unsafe(method(sendSlack:))]
-        fn send_slack(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::SendSlack);
-        }
-
-        #[unsafe(method(askSlack:))]
-        fn ask_slack(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::AskSlack);
-        }
-
-        #[unsafe(method(autocompleteSlack:))]
-        fn autocomplete_slack(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::AutocompleteSlack);
-        }
-
-        #[unsafe(method(toggleWriteAsMe:))]
-        fn toggle_write_as_me(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::ToggleWriteAsMe);
-        }
-
-        #[unsafe(method(learnMyStyle:))]
-        fn learn_my_style(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::LearnMyStyle);
-        }
-
-        #[unsafe(method(useSlackDraft:))]
-        fn use_slack_draft(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::UseSlackDraft);
-        }
-
-        #[unsafe(method(createSlackEvent:))]
-        fn create_slack_event(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::CreateSlackEvent);
-        }
-
-        #[unsafe(method(closeSlackAssist:))]
-        fn close_slack_assist(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::CloseSlackAssist);
-        }
-
-        #[unsafe(method(agentSlack:))]
-        fn agent_slack(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::AgentSlack);
-        }
-
-        #[unsafe(method(startSlackAgent:))]
-        fn start_slack_agent(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::StartSlackAgent);
+            push(UiEvent::ShowPage(Page::Feature(slack_page::PAGE_ID)));
         }
 
         #[unsafe(method(addTask:))]
@@ -275,16 +176,9 @@ define_class!(
             push(UiEvent::ClearActivity);
         }
 
-        #[unsafe(method(showRoutines:))]
-        fn show_routines(&self, _sender: Option<&AnyObject>) {
-            push(UiEvent::ShowRoutines);
-        }
-
-        #[unsafe(method(deleteRoutine:))]
-        fn delete_routine(&self, sender: Option<&AnyObject>) {
-            if let Some(row) = sender_tag(sender) {
-                push(UiEvent::DeleteRoutine(row));
-            }
+        #[unsafe(method(showAutopilot:))]
+        fn show_autopilot(&self, _sender: Option<&AnyObject>) {
+            push(UiEvent::ShowPage(Page::Feature(autopilot_page::PAGE_ID)));
         }
 
         #[unsafe(method(acceptPlanEvent:))]
@@ -348,16 +242,14 @@ define_class!(
     }
 
     unsafe impl NSTextViewDelegate for Controller {
-        /// Clicks on a reply's "N steps" line fold or unfold it, and on a Slack
-        /// message's reply count open its thread; other links open normally.
+        /// Clicks on a reply's "N steps" line fold or unfold it; other links
+        /// open normally.
         #[unsafe(method(textView:clickedOnLink:atIndex:))]
         fn clicked_on_link(&self, _view: &NSTextView, link: &AnyObject, _index: usize) -> Bool {
             // SAFETY: links are NSURL or NSString, and both describe themselves as the URL text.
             let url: Retained<NSString> = unsafe { msg_send![link, description] };
             let url = url.to_string();
-            let event = rich_text::steps_turn(&url)
-                .map(UiEvent::ToggleSteps)
-                .or_else(|| rich_text::thread_index(&url).map(UiEvent::OpenSlackThread));
+            let event = rich_text::steps_turn(&url).map(UiEvent::ToggleSteps);
             match event {
                 Some(event) => {
                     push(event);

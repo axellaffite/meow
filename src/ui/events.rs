@@ -19,12 +19,6 @@ pub enum UiEvent {
     Drop,
     /// The mouse moved this far over the cat (petting).
     Stroke(f64),
-    /// Index into the themes listed by `Settings::coats`.
-    SetCoat(usize),
-    /// Make a theme from a photo of the user's cat.
-    AddCoatFromPhoto,
-    /// Remove the custom theme being worn.
-    RemoveCoat,
     /// Put down a bowl of kibble for the cat.
     Feed,
     /// Let a mouse run across the screen for the cat to chase.
@@ -74,50 +68,13 @@ pub enum UiEvent {
     /// Dismiss the activity item in this row.
     DismissActivity(usize),
     ClearActivity,
-    /// Open the Scheduled page.
-    ShowRoutines,
-    /// Delete the scheduled task in this row.
-    DeleteRoutine(usize),
-    /// Open the Slack page.
-    ShowSlack,
-    /// Start the Slack sign-in flow.
-    SignInSlack,
-    /// Open the Slack conversation in this row, as last listed.
-    OpenSlackConversation(usize),
-    /// Show the Slack list's tab of direct messages, or of channels.
-    SlackTab(crate::ui::slack_page::SlackTab),
-    /// Open the thread of the open Slack conversation's message at this index.
-    OpenSlackThread(usize),
-    /// Go back from a Slack thread to its conversation, or from a
-    /// conversation to the list.
-    SlackBack,
-    /// Send the reply typed in the open Slack conversation.
-    SendSlack,
-    /// Ask Claude, privately, about the open Slack conversation.
-    AskSlack,
-    /// Have Claude research and draft the reply, with the user's tools.
-    AutocompleteSlack,
-    /// Turn drafting in the user's own style on or off.
-    ToggleWriteAsMe,
-    /// Learn the user's style from their Slack messages.
-    LearnMyStyle,
-    /// Put Claude's draft in the Slack reply box.
-    UseSlackDraft,
-    /// Create the calendar event Claude proposed.
-    CreateSlackEvent,
-    /// Close the private Claude panel.
-    CloseSlackAssist,
-    /// Have Claude propose a coding agent for the open Slack conversation.
-    AgentSlack,
-    /// Start the coding agent Claude proposed.
-    StartSlackAgent,
+    /// Open a feature's page (a sidebar row of `Page::Feature`, a menu item).
+    ShowPage(crate::ui::sidebar::Page),
     Submit,
     Escape,
     /// The bubble stopped being the focused window.
     FocusLost,
     NewConversation,
-    /// Check for a new version of Meow now.
-    CheckForUpdates,
     Quit,
 }
 

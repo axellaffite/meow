@@ -2,7 +2,8 @@
 //! cat in their own window (the kibble bowl, the mouse it chases, a hairball).
 
 use super::{
-    BUBBLE_H, CANVAS_H, CANVAS_W, Coat, Facing, Frame, Grid, HEAD_TOP, LEG_ROW, Rgb, hairball, pig,
+    Animal, BUBBLE_H, CANVAS_H, CANVAS_W, Coat, Facing, Frame, Grid, HEAD_TOP, LEG_ROW, Rgb, corgi,
+    hairball, pig,
 };
 
 pub const PROP_W: usize = 11;
@@ -52,10 +53,10 @@ pub(super) fn draw_eating(grid: &mut Grid, bite: u8) {
     let mut standing = grid.blank();
     super::draw_standing(&mut standing, true, [0; 4]);
     let drop = BITE_DROPS[bite as usize % BITE_DROPS.len()];
-    let (head_x, head_rows) = if grid.pig {
-        (pig::HEAD_X, pig::HEAD_ROWS)
-    } else {
-        (HEAD_X, HEAD_ROWS)
+    let (head_x, head_rows) = match grid.animal {
+        Animal::Cat => (HEAD_X, HEAD_ROWS),
+        Animal::Pig => (pig::HEAD_X, pig::HEAD_ROWS),
+        Animal::Corgi => (corgi::HEAD_X, corgi::HEAD_ROWS),
     };
     let is_head = |x: usize, y: usize| x >= head_x && (BUBBLE_H..BUBBLE_H + head_rows).contains(&y);
     let cells = |grid: &Grid| {
@@ -79,10 +80,10 @@ pub(super) fn draw_eating(grid: &mut Grid, bite: u8) {
 /// or struck forward and down.
 pub(super) fn draw_swatting(grid: &mut Grid, phase: u8) {
     super::draw_standing(grid, false, [0; 4]);
-    let leg_x = if grid.pig {
-        pig::SWAT_LEG_X
-    } else {
-        SWAT_LEG_X
+    let leg_x = match grid.animal {
+        Animal::Cat => SWAT_LEG_X,
+        Animal::Pig => pig::SWAT_LEG_X,
+        Animal::Corgi => corgi::SWAT_LEG_X,
     };
     let belly = BUBBLE_H + LEG_ROW;
     // Take the front leg off the ground; its near outline is shared with the other leg.

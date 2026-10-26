@@ -1,93 +1,42 @@
 //! Calendar events from a Slack conversation, through the calendar connector
 //! of the user's Claude Code, whichever it is.
 //!
-//! At start, a short `claude` run reports its tools, and the calendar ones are
-//! kept. A scheduling request then goes: Ask routes it here, the people in the
+//! The calendar tools are found at launch (see `super::calendar`). A
+//! scheduling request goes: Ask routes it here, the people in the
 //! conversation are looked up, Claude plans the event with the calendar's read
 //! tools only, the user confirms, and Claude creates it with the create tool
 //! only. Each run is limited to those tools; nothing else can be called.
 
-use std::sync::mpsc::TryRecvError;
-
-use meow::claude::{ClaudeEvent, Run, STRONG_MODEL};
+use meow::claude::{Run, STRONG_MODEL};
 use meow::slack::assist::{self, Context, Reply};
-use meow::slack::calendar::{self, CalendarTools, Person, Planned, Proposal};
+use meow::slack::calendar::{self, Person, Planned, Proposal};
 use meow::slack::client::Command;
 use meow::slack::model::User;
 
-use super::slack_assist::Stage;
-use super::{App, now_secs};
+use super::assist::Stage;
+use super::{Slack, now_secs};
+use crate::app::feature::Host;
 
-/// The prompt of the run that only reports the tools; it is stopped before
-/// it answers.
-const PROBE_PROMPT: &str = "Reply with: ok";
-
-/// The calendar tools of the user's Claude Code, once known.
-#[derive(Default)]
-pub(super) struct CalendarState {
-    tools: Option<CalendarTools>,
-    probe: Option<Run>,
-    probed: bool,
-}
-
-impl CalendarState {
-    pub(super) fn tools(&self) -> Option<&CalendarTools> {
-        self.tools.as_ref()
-    }
-}
-
-impl App {
-    /// Finds the calendar tools once Claude is ready.
-    pub(super) fn poll_calendar_probe(&mut self) {
-        if self.calendar.probed {
-            return;
-        }
-        if self.calendar.probe.is_none() {
-            let Ok(env) = self.claude_env() else {
-                return;
-            };
-            // No tools allowed: the run only has to start and list them.
-            match Run::start_restricted(env, PROBE_PROMPT, &env.model, &[]) {
-                Ok(run) => self.calendar.probe = Some(run),
-                Err(error) => {
-                    eprintln!("meow: could not list Claude's tools: {error}");
-                    self.calendar.probed = true;
-                }
-            }
-            return;
-        }
-        loop {
-            let Some(probe) = &self.calendar.probe else {
-                return;
-            };
-            match probe.events.try_recv() {
-                Ok(ClaudeEvent::Tools(tools)) => self.calendar.tools = CalendarTools::find(&tools),
-                Ok(ClaudeEvent::Done { .. } | ClaudeEvent::Failed(_))
-                | Err(TryRecvError::Disconnected) => {}
-                Ok(_) => continue,
-                Err(TryRecvError::Empty) => return,
-            }
-            // Dropping the run stops it.
-            self.calendar.probe = None;
-            self.calendar.probed = true;
-            return;
-        }
-    }
-
+impl Slack {
     /// Ask found a scheduling request: look up who is in the conversation.
-    pub(super) fn start_calendar(&mut self) {
+    pub(super) fn start_calendar(&mut self, host: &mut dyn Host) {
         let Some(channel) = self.slack_assist.channel.clone() else {
             return;
         };
         if !self.slack.request(Command::People(channel)) {
-            return self.answer(Err("Not connected to Slack.".to_string()));
+            return self.answer(Err("Not connected to Slack.".to_string()), host);
         }
         self.slack_assist.stage = Stage::FindingPeople;
-        self.render_slack_assist();
+        self.render_slack_assist(host);
     }
 
     /// The worker's answer to [`Command::People`]: plan the event with them.
-    pub(super) fn on_people(&mut self, channel: String, people: Result<Vec<User>, String>) {
+    pub(super) fn on_people(
+        &mut self,
+        channel: String,
+        people: Result<Vec<User>, String>,
+        host: &mut dyn Host,
+    ) {
         let waiting = matches!(self.slack_assist.stage, Stage::FindingPeople)
             && self.slack_assist.channel.as_deref() == Some(channel.as_str());
         if !waiting {
@@ -96,13 +45,19 @@ impl App {
         let people = match people {
             Ok(people) => people,
             Err(error) => {
-                return self.answer(Err(format!("Could not look up the people here: {error}")));
+                return self.answer(
+                    Err(format!("Could not look up the people here: {error}")),
+                    host,
+                );
             }
         };
         let (Some(tools), Some(context)) =
-            (self.calendar.tools.clone(), self.slack.assist_context())
+            (host.calendar_tools().cloned(), self.slack.assist_context())
         else {
-            return self.answer(Err("No calendar connector found in Claude Code.".into()));
+            return self.answer(
+                Err("No calendar connector found in Claude Code.".into()),
+                host,
+            );
         };
         let me = self.slack.my_id();
         let people: Vec<Person> = people
@@ -123,23 +78,25 @@ impl App {
             can_schedule: true,
         };
         let prompt = calendar::proposal_prompt(&ctx, &self.slack_assist.question, &people, &tools);
-        let started = self
-            .claude_env()
+        let started = super::assist::claude_env(host)
             .and_then(|env| Run::start_restricted(env, &prompt, STRONG_MODEL, &tools.read));
         match started {
             Ok(run) => {
                 self.slack_assist.run = Some(run);
                 self.slack_assist.stage = Stage::Planning;
-                self.render_slack_assist();
+                self.render_slack_assist(host);
             }
-            Err(error) => self.answer(Err(error)),
+            Err(error) => self.answer(Err(error), host),
         }
     }
 
     /// The planning run's result: an event to confirm, or why there is none.
-    pub(super) fn on_planned(&mut self, result: &str) {
-        let Some(tools) = self.calendar.tools.as_ref() else {
-            return self.answer(Err("No calendar connector found in Claude Code.".into()));
+    pub(super) fn on_planned(&mut self, result: &str, host: &mut dyn Host) {
+        let Some(tools) = host.calendar_tools() else {
+            return self.answer(
+                Err("No calendar connector found in Claude Code.".into()),
+                host,
+            );
         };
         match calendar::parse_proposal(result, tools) {
             Planned::Event { note, proposal } => {
@@ -147,22 +104,25 @@ impl App {
                     note,
                     proposal: *proposal,
                 };
-                self.render_slack_assist();
+                self.render_slack_assist(host);
             }
-            Planned::NotPlanned(reason) => self.answer(Ok(Reply {
-                answer: reason,
-                draft: None,
-            })),
+            Planned::NotPlanned(reason) => self.answer(
+                Ok(Reply {
+                    answer: reason,
+                    draft: None,
+                }),
+                host,
+            ),
         }
     }
 
     /// The user confirmed: create the event, with the create tool only.
-    pub(super) fn create_slack_event(&mut self) {
+    pub(super) fn create_slack_event(&mut self, host: &mut dyn Host) {
         let Stage::Proposed { note, proposal } = std::mem::take(&mut self.slack_assist.stage)
         else {
             return;
         };
-        let started = self.claude_env().and_then(|env| {
+        let started = super::assist::claude_env(host).and_then(|env| {
             let allowed = [proposal.create_tool.clone()];
             Run::start_restricted(
                 env,
@@ -175,14 +135,14 @@ impl App {
             Ok(run) => {
                 self.slack_assist.run = Some(run);
                 self.slack_assist.stage = Stage::Creating { note, proposal };
-                self.render_slack_assist();
+                self.render_slack_assist(host);
             }
-            Err(error) => self.answer(Err(error)),
+            Err(error) => self.answer(Err(error), host),
         }
     }
 
     /// The event is created (or not): say so, and offer the announcement.
-    pub(super) fn on_created(&mut self, result: &str, proposal: Proposal) {
+    pub(super) fn on_created(&mut self, result: &str, proposal: Proposal, host: &mut dyn Host) {
         match calendar::parse_created(result) {
             Ok(link) => {
                 let summary = format!("Created: {} · {}", proposal.summary, proposal.when());
@@ -196,9 +156,9 @@ impl App {
                     .announcement
                     .map(|text| assist::parse(&text).answer)
                     .filter(|text| !text.is_empty());
-                self.answer(Ok(Reply { answer, draft }));
+                self.answer(Ok(Reply { answer, draft }), host);
             }
-            Err(reason) => self.answer(Err(format!("The event was not created: {reason}"))),
+            Err(reason) => self.answer(Err(format!("The event was not created: {reason}")), host),
         }
     }
 }

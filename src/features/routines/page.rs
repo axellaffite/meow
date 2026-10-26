@@ -3,22 +3,22 @@
 //! does, its last result and a × to delete it.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use meow::routines::{Routine, Routines, Trigger};
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
-use objc2::{MainThreadMarker, MainThreadOnly, sel};
+use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSLineBreakMode, NSScrollView, NSTextAlignment, NSTextField, NSView,
 };
 use objc2_foundation::{NSAttributedString, NSPoint, NSRect, NSSize, NSString};
 
-use super::bubble;
-use super::controller::Controller;
-use super::flipped::FlippedView;
-use super::rich_text::{self, Attributes};
-use super::theme;
-use super::widgets;
+use crate::ui::action::Action;
+use crate::ui::bubble;
+use crate::ui::flipped::FlippedView;
+use crate::ui::rich_text::{self, Attributes};
+use crate::ui::theme;
+use crate::ui::widgets;
 
 const MARGIN: f64 = 16.0;
 const ROW_HEIGHT: f64 = 22.0;
@@ -34,14 +34,15 @@ pub struct RoutinesPage {
     pub view: Retained<NSView>,
     scroll: Retained<NSScrollView>,
     list: Retained<FlippedView>,
-    target: Retained<Controller>,
-    /// Routine ids in the order shown; row buttons carry an index into it.
-    shown_ids: RefCell<Vec<u64>>,
+    /// Called with a routine's id when its × is clicked.
+    on_delete: Rc<dyn Fn(u64)>,
+    /// The × buttons' targets, which the buttons only hold weakly.
+    actions: RefCell<Vec<Retained<Action>>>,
     mtm: MainThreadMarker,
 }
 
 impl RoutinesPage {
-    pub fn new(mtm: MainThreadMarker, controller: &Retained<Controller>, frame: NSRect) -> Self {
+    pub fn new(mtm: MainThreadMarker, frame: NSRect, on_delete: impl Fn(u64) + 'static) -> Self {
         let view = NSView::initWithFrame(NSView::alloc(mtm), frame);
         view.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewWidthSizable
@@ -66,15 +67,10 @@ impl RoutinesPage {
             view,
             scroll,
             list,
-            target: controller.clone(),
-            shown_ids: RefCell::new(Vec::new()),
+            on_delete: Rc::new(on_delete),
+            actions: RefCell::new(Vec::new()),
             mtm,
         }
-    }
-
-    /// The id of the routine in row `index`, as last rendered.
-    pub fn id_at(&self, index: usize) -> Option<u64> {
-        self.shown_ids.borrow().get(index).copied()
     }
 
     /// Draws the routines; the one `running` gets an orange outline.
@@ -84,7 +80,7 @@ impl RoutinesPage {
             row.removeFromSuperview();
         }
         let shown = routines.display();
-        let mut ids = Vec::new();
+        self.actions.borrow_mut().clear();
         let mut y = 0.0;
         if shown.is_empty() {
             let hint = "Nothing scheduled. Ask in the chat, e.g. \"at 17:00, summarize my \
@@ -99,26 +95,15 @@ impl RoutinesPage {
         }
         for routine in shown {
             let is_running = running == Some(routine.id);
-            y = self.add_routine(ids.len(), routine, is_running, width, y, now) + CARD_GAP;
-            ids.push(routine.id);
+            y = self.add_routine(routine, is_running, width, y, now) + CARD_GAP;
         }
         let height = y.max(self.scroll.contentSize().height);
         self.list.setFrameSize(NSSize::new(width, height));
-        self.shown_ids.replace(ids);
     }
 
     /// A card: name and when on top, then what it watches and does, then its
     /// last result. Returns the y below.
-    fn add_routine(
-        &self,
-        index: usize,
-        routine: &Routine,
-        running: bool,
-        width: f64,
-        y: f64,
-        now: u64,
-    ) -> f64 {
-        let target: &AnyObject = &self.target;
+    fn add_routine(&self, routine: &Routine, running: bool, width: f64, y: f64, now: u64) -> f64 {
         let lines = describe(routine, running);
         let height = ROW_HEIGHT + lines.len() as f64 * LINE_HEIGHT + 2.0 * CARD_PADDING;
         let card = FlippedView::new(self.mtm, rect(0.0, y, width, height));
@@ -165,14 +150,16 @@ impl RoutinesPage {
         label.setAlignment(NSTextAlignment::Right);
         label.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinXMargin);
 
+        let (on_delete, id) = (Rc::clone(&self.on_delete), routine.id);
+        let action = Action::new(self.mtm, move || on_delete(id));
         let delete = widgets::text_button(
             self.mtm,
             "×",
             widgets::ButtonStyle::Link,
-            target,
-            sel!(deleteRoutine:),
+            &action,
+            Action::selector(),
         );
-        delete.setTag(index as isize);
+        self.actions.borrow_mut().push(action);
         delete.setToolTip(Some(&NSString::from_str("Delete this scheduled task")));
         delete.setFrame(rect(delete_x, top, DELETE_WIDTH, ROW_HEIGHT));
         delete.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinXMargin);

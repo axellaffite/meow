@@ -2,13 +2,13 @@
 //! a button to (re)learn the user's style from their messages, and a status.
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
-use objc2::{MainThreadMarker, MainThreadOnly, sel};
+use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSAutoresizingMaskOptions, NSButton, NSTextField, NSView};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
-use super::controller::Controller;
+use super::action::{Action, ActionSink};
 use super::rich_text::{self, Attributes};
+use super::slack_page::SlackAction;
 use super::theme;
 use super::widgets;
 
@@ -39,12 +39,11 @@ pub struct VoiceBar {
 
 impl VoiceBar {
     /// A bar filling `frame`, pinned to the top of its superview.
-    pub fn new(mtm: MainThreadMarker, controller: &Retained<Controller>, frame: NSRect) -> Self {
+    pub fn new(mtm: MainThreadMarker, actions: &ActionSink<SlackAction>, frame: NSRect) -> Self {
         let view = NSView::initWithFrame(NSView::alloc(mtm), frame);
         view.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewMinYMargin,
         );
-        let target: &AnyObject = controller;
         // A card of its own, controls on one row: toggle, status, then relearn.
         widgets::paint(&view, Some(&theme::card()), None);
         let top = (frame.size.height - BUTTON_HEIGHT) / 2.0;
@@ -54,8 +53,8 @@ impl VoiceBar {
             mtm,
             "□ Write like me",
             widgets::ButtonStyle::Quiet,
-            target,
-            sel!(toggleWriteAsMe:),
+            &actions.target(SlackAction::ToggleWriteAsMe),
+            Action::selector(),
         );
         toggle.setFrame(rect(PADDING, top, TOGGLE_WIDTH, BUTTON_HEIGHT));
         view.addSubview(&toggle);
@@ -64,8 +63,8 @@ impl VoiceBar {
             mtm,
             "Learn",
             widgets::ButtonStyle::Quiet,
-            target,
-            sel!(learnMyStyle:),
+            &actions.target(SlackAction::LearnMyStyle),
+            Action::selector(),
         );
         learn.setFrame(rect(
             width - PADDING - LEARN_WIDTH,

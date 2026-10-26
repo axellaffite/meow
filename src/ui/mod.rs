@@ -1,4 +1,6 @@
+pub mod action;
 pub mod activity_page;
+pub mod autopilot_page;
 pub mod bubble;
 pub mod cat_window;
 pub mod chat_page;
@@ -16,7 +18,6 @@ pub mod picture;
 pub mod plan_page;
 pub mod pointer;
 pub mod rich_text;
-pub mod routines_page;
 pub mod screens;
 pub mod sidebar;
 pub mod signin;

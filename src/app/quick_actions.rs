@@ -7,7 +7,7 @@ use meow::plan::DayPlan;
 
 use crate::ui::sidebar::Page;
 
-use super::requests::RunKind;
+use super::requests::{RunKind, STILL_WORKING};
 use super::{App, now_secs};
 
 /// The user line shown for a run of `action`.
@@ -33,7 +33,7 @@ impl App {
         }
         let id = ChatId::Action(index);
         self.show_conversation(id.clone());
-        let running = self.run.as_ref().is_some_and(|run| run.chat() == &id);
+        let running = self.is_running(&id);
         if !has_result && !running {
             self.run_action(index);
         }
@@ -52,8 +52,8 @@ impl App {
             return;
         };
         let id = ChatId::Action(index);
-        if self.run.is_some() {
-            self.info_in(&id, "Still working on the last request (Esc to cancel).");
+        if self.is_running(&id) {
+            self.info_in(&id, STILL_WORKING);
             return;
         }
         self.detach_chat_agents(&id);
@@ -64,14 +64,14 @@ impl App {
             &action.full_prompt(now_secs(), &self.tasks.recently_done()),
             RunKind::Action,
         );
-        if self.run.is_some()
+        if self.is_running(&id)
             && self.chat.page() == Page::Plan
             && self.conversations.active() == &id
         {
             // Follow the run's progress; the new plan shows when it is done.
             self.open_conversation(id.clone(), false);
         }
-        if self.run.is_none() && !self.chat.is_visible() {
+        if !self.is_running(&id) && !self.chat.is_visible() {
             // It could not start; the reason is in the action's conversation.
             self.unread = true;
             self.unread_chat = id;

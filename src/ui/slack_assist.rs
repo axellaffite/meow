@@ -6,13 +6,15 @@
 
 use meow::slack::format::{self, NameMap};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{MainThreadMarker, MainThreadOnly, sel};
+use objc2::runtime::ProtocolObject;
+use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSAutoresizingMaskOptions, NSButton, NSScrollView, NSTextView, NSView};
 use objc2_foundation::{NSAttributedString, NSMutableAttributedString, NSPoint, NSRect, NSSize};
 
+use super::action::{Action, ActionSink};
 use super::controller::Controller;
 use super::rich_text::{self, Attributes};
+use super::slack_page::SlackAction;
 use super::theme;
 use super::widgets;
 
@@ -86,13 +88,17 @@ pub struct AssistPanel {
 
 impl AssistPanel {
     /// A hidden panel filling `frame`, its width following its superview.
-    pub fn new(mtm: MainThreadMarker, controller: &Retained<Controller>, frame: NSRect) -> Self {
+    pub fn new(
+        mtm: MainThreadMarker,
+        controller: &Retained<Controller>,
+        actions: &ActionSink<SlackAction>,
+        frame: NSRect,
+    ) -> Self {
         let view = NSView::initWithFrame(NSView::alloc(mtm), frame);
         view.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewMaxYMargin,
         );
         let width = frame.size.width;
-        let target: &AnyObject = controller;
         // A gold pixel frame: this is Claude talking to the user alone.
         widgets::paint(
             &view,
@@ -104,8 +110,8 @@ impl AssistPanel {
             mtm,
             "Close",
             widgets::ButtonStyle::Quiet,
-            target,
-            sel!(closeSlackAssist:),
+            &actions.target(SlackAction::CloseAssist),
+            Action::selector(),
         );
         close.setFrame(rect(
             width - INSET - CLOSE_WIDTH,
@@ -120,8 +126,8 @@ impl AssistPanel {
             mtm,
             "Use draft",
             widgets::ButtonStyle::Primary,
-            target,
-            sel!(useSlackDraft:),
+            &actions.target(SlackAction::UseDraft),
+            Action::selector(),
         );
         use_draft.setFrame(rect(
             width - INSET - CLOSE_WIDTH - GAP - USE_WIDTH,
@@ -136,8 +142,8 @@ impl AssistPanel {
             mtm,
             "Create event",
             widgets::ButtonStyle::Go,
-            target,
-            sel!(createSlackEvent:),
+            &actions.target(SlackAction::CreateEvent),
+            Action::selector(),
         );
         create.setFrame(rect(
             width - INSET - CLOSE_WIDTH - GAP - CREATE_WIDTH,
@@ -152,8 +158,8 @@ impl AssistPanel {
             mtm,
             "Start agent",
             widgets::ButtonStyle::Go,
-            target,
-            sel!(startSlackAgent:),
+            &actions.target(SlackAction::StartAgent),
+            Action::selector(),
         );
         start_agent.setFrame(rect(
             width - INSET - CLOSE_WIDTH - GAP - START_WIDTH,

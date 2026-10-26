@@ -20,7 +20,7 @@ type Discovery = Result<(Superset, Vec<Project>), String>;
 
 /// Where an agent was asked for, and so where its output goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Origin {
+pub(crate) enum Origin {
     /// The chat turn of the `/agent` request (a transcript entry index).
     Chat {
         chat: ChatId,
@@ -32,7 +32,7 @@ pub(super) enum Origin {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Status {
+pub(crate) enum Status {
     Starting,
     Running,
     Finished(Outcome),
@@ -48,17 +48,17 @@ enum Update {
     Nothing,
 }
 
-pub(super) struct AgentSession {
-    pub(super) origin: Origin,
+pub(crate) struct AgentSession {
+    pub(crate) origin: Origin,
     /// `None` once the agent is no longer followed.
     run: Option<AgentRun>,
     /// "project · workspace".
-    pub(super) title: String,
+    pub(crate) title: String,
     /// What the user asked, shown above the agent's output.
-    pub(super) request: String,
-    pub(super) steps: Vec<String>,
-    pub(super) messages: Vec<String>,
-    pub(super) status: Status,
+    pub(crate) request: String,
+    pub(crate) steps: Vec<String>,
+    pub(crate) messages: Vec<String>,
+    pub(crate) status: Status,
 }
 
 impl AgentSession {
@@ -107,7 +107,7 @@ impl AgentSession {
     }
 
     /// One line on where the agent is, for the Slack panel.
-    pub(super) fn status_line(&self) -> String {
+    pub(crate) fn status_line(&self) -> String {
         match &self.status {
             Status::Starting => "Creating the workspace…".to_string(),
             Status::Running => "The agent is working…".to_string(),
@@ -130,6 +130,8 @@ pub(super) struct AgentsState {
     projects: Vec<Project>,
     discovery: Option<Receiver<Discovery>>,
     sessions: Vec<AgentSession>,
+    /// Counts the agents' updates, so a page showing one knows to redraw.
+    revision: u64,
 }
 
 impl AgentsState {
@@ -327,18 +329,21 @@ impl App {
             .find(|s| matches!(&s.origin, Origin::Slack { channel: c } if c == channel))
     }
 
+    /// Changes each time an agent moves on.
+    pub(super) fn agents_revision(&self) -> u64 {
+        self.agents.revision
+    }
+
     fn show_agent_update(&mut self, index: usize, update: Update) {
+        self.agents.revision += 1;
         let session = &self.agents.sessions[index];
         match session.origin.clone() {
             Origin::Chat { chat, turn } => {
                 let status = session.status.clone();
                 self.show_in_chat(&chat, turn, update, &status);
             }
-            Origin::Slack { channel } => {
-                if self.slack_assist_shows_agent(&channel) {
-                    self.render_slack_assist();
-                }
-            }
+            // Its Slack conversation's panel redraws as the revision changes.
+            Origin::Slack { .. } => {}
         }
     }
 

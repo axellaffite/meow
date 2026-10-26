@@ -1,15 +1,17 @@
 //! Pixel-art cat, drawn as text grids and composed into RGB frames.
 //!
-//! The cat is drawn facing right; left-facing frames are mirrored. One coat,
-//! Dédé, is a pig: same outline and poses, its own head, body and tail.
+//! The cat is drawn facing right; left-facing frames are mirrored. Two coats
+//! are other animals, Dédé a pig and a corgi: same canvas and poses, their
+//! own head, body and tail.
 
 mod coat;
+mod corgi;
 mod hairball;
 mod hanging;
 mod pig;
 mod play;
 
-pub use coat::{Coat, Palette};
+pub use coat::{Animal, Coat, Palette};
 pub use hairball::SPIT;
 pub use hanging::{Kick, SCRUFF};
 pub use play::{PROP_H, PROP_W, Prop, SWAT_PAW, render_prop};
@@ -186,21 +188,21 @@ const BANG: [&str; 4] = ["kwwwkwwwk", "kwwwkwwwk", "kwwwwwwwk", "kwwwkwwwk"];
 /// A mutable char grid used while composing a frame.
 struct Grid {
     cells: Vec<char>,
-    /// Draw the pig rather than the cat.
-    pig: bool,
+    /// The animal drawn.
+    animal: Animal,
 }
 
 impl Grid {
-    fn new(pig: bool) -> Self {
+    fn new(animal: Animal) -> Self {
         Self {
             cells: vec!['.'; CANVAS_W * CANVAS_H],
-            pig,
+            animal,
         }
     }
 
     /// An empty grid for the same animal, to compose a pose in.
     fn blank(&self) -> Self {
-        Self::new(self.pig)
+        Self::new(self.animal)
     }
 
     fn set(&mut self, x: isize, y: usize, c: char) {
@@ -236,9 +238,11 @@ impl Grid {
     }
 }
 
-fn cat_rows(pig: bool, eyes_closed: bool) -> Vec<&'static str> {
-    if pig {
-        return pig::rows(eyes_closed);
+fn cat_rows(animal: Animal, eyes_closed: bool) -> Vec<&'static str> {
+    match animal {
+        Animal::Pig => return pig::rows(eyes_closed),
+        Animal::Corgi => return corgi::rows(eyes_closed),
+        Animal::Cat => {}
     }
     let eyes = if eyes_closed { EYES_CLOSED } else { EYES_OPEN };
     HEAD_TOP
@@ -284,10 +288,12 @@ fn draw_legs(grid: &mut Grid, top: usize, strides: [isize; 4], extra: usize) {
 }
 
 fn draw_standing(grid: &mut Grid, eyes_closed: bool, strides: [isize; 4]) {
-    if grid.pig {
-        return pig::draw_standing(grid, eyes_closed, strides);
+    match grid.animal {
+        Animal::Pig => return pig::draw_standing(grid, eyes_closed, strides),
+        Animal::Corgi => return corgi::draw_standing(grid, eyes_closed, strides),
+        Animal::Cat => {}
     }
-    grid.blit(&cat_rows(grid.pig, eyes_closed), 0, BUBBLE_H);
+    grid.blit(&cat_rows(grid.animal, eyes_closed), 0, BUBBLE_H);
     draw_legs(grid, BUBBLE_H, strides, 0);
 }
 
@@ -329,8 +335,8 @@ fn draw_upside_down(grid: &mut Grid, strides: [isize; 4]) {
 
 fn draw_sleeping(grid: &mut Grid) {
     let top = SLEEP_TOP;
-    grid.blit(&cat_rows(grid.pig, true), 0, top);
-    if !grid.pig {
+    grid.blit(&cat_rows(grid.animal, true), 0, top);
+    if grid.animal == Animal::Cat {
         tuck_tail(grid, top);
     }
     draw_belly(grid, top + HEAD_TOP.len() + 2 + BODY.len());
@@ -386,7 +392,7 @@ fn draw_bubble(grid: &mut Grid, bubble: Bubble) {
 }
 
 pub fn render(look: &Look, coat: Coat) -> Frame {
-    let mut grid = Grid::new(coat.is_pig());
+    let mut grid = Grid::new(coat.animal());
     match look.pose {
         Pose::Walk(phase) => draw_standing(&mut grid, false, WALK_STRIDES[phase as usize % 4]),
         Pose::Stand => draw_standing(&mut grid, false, [0; 4]),
@@ -636,7 +642,9 @@ mod tests {
     #[test]
     fn coats_color_the_cat_differently() {
         let stand = look(Pose::Stand, Bubble::None, Facing::Right);
-        let cats = Coat::ALL.into_iter().filter(|coat| !coat.is_pig());
+        let cats = Coat::ALL
+            .into_iter()
+            .filter(|coat| coat.animal() == Animal::Cat);
         let frames: Vec<_> = cats.map(|coat| super::render(&stand, coat)).collect();
         assert_ne!(frames[0], frames[1]);
         assert_ne!(frames[1], frames[2]);
@@ -681,7 +689,10 @@ mod tests {
 
     #[test]
     fn closed_eyes_are_outlined_whatever_the_coat() {
-        for coat in Coat::ALL.into_iter().filter(|coat| !coat.is_pig()) {
+        for coat in Coat::ALL
+            .into_iter()
+            .filter(|coat| coat.animal() == Animal::Cat)
+        {
             let eyes = eye_colors(coat, Pose::Blink);
             assert!(eyes.iter().all(|&eye| Some(eye) == color('k')), "{coat:?}");
         }
