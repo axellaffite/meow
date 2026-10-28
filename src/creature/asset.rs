@@ -3,13 +3,15 @@
 //!
 //! Nothing is converted at load: positions, joints and clips stay in glTF
 //! space, in meters, Y up, the creature facing +Z, its left toward +X.
-//! Malformed input is an error, never a panic: every buffer range is checked
-//! before it is read.
+//! Malformed input is an error, never a panic: every buffer range, and the
+//! layout of every accessor read, is checked before it is read.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
+use gltf::accessor::{DataType, Dimensions};
+use gltf::animation::Property;
 use gltf::animation::util::ReadOutputs;
 use gltf::mesh::Mode;
 use serde_json::Value;
@@ -79,6 +81,7 @@ pub struct Primitive {
     /// `COLOR_0` as RGBA.
     pub colors: Vec<Vec4>,
     /// `JOINTS_0`: indices into the skeleton's first `skin_joints` joints.
+    /// An unskinned mesh parented to a bone gets that bone, whole.
     pub joints: Vec<[u16; 4]>,
     /// `WEIGHTS_0`.
     pub weights: Vec<Vec4>,
@@ -441,6 +444,26 @@ fn check_buffers(document: &gltf::Document, blob: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Refuses an accessor laid out other than `dimensions` of one of `types`:
+/// the `gltf` readers panic on a layout they do not expect.
+fn check_layout(
+    accessor: Option<gltf::Accessor<'_>>,
+    what: &str,
+    dimensions: &[Dimensions],
+    types: &[DataType],
+) -> Result<(), String> {
+    match accessor {
+        Some(a) if !dimensions.contains(&a.dimensions()) || !types.contains(&a.data_type()) => {
+            Err(format!(
+                "{what}: {:?} of {:?} is not a layout glTF allows there",
+                a.dimensions(),
+                a.data_type()
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
 struct Loader<'a> {
     document: &'a gltf::Document,
     blob: &'a [u8],
@@ -512,7 +535,7 @@ impl<'a> Loader<'a> {
         let (skeleton, bones) = self.skeleton(&skin)?;
         // The joint each bone node is.
         let joint_of = |node: usize| bones.iter().position(|&bone| bone == node);
-        let primitives = self.primitives(&skin, &skeleton)?;
+        let primitives = self.primitives(&skin, &skeleton, &joint_of)?;
         let sockets = self.sockets(&joint_of)?;
         let clips = self.clips(&joint_of)?;
         let mut extras = BTreeMap::new();
@@ -586,6 +609,12 @@ impl<'a> Loader<'a> {
             stack.extend(children);
         }
 
+        check_layout(
+            skin.inverse_bind_matrices(),
+            "inverse bind matrices",
+            &[Dimensions::Mat4],
+            &[DataType::F32],
+        )?;
         let inverse_binds: Vec<Mat4> = match skin.reader(self.buffer()).read_inverse_bind_matrices()
         {
             Some(read) => read.map(|m| Mat4::from_cols_array_2d(&m)).collect(),
@@ -622,6 +651,7 @@ impl<'a> Loader<'a> {
         &self,
         skin: &gltf::Skin<'a>,
         skeleton: &Skeleton,
+        joint_of: &dyn Fn(usize) -> Option<usize>,
     ) -> Result<Vec<Primitive>, String> {
         let mut primitives = Vec::new();
         for node in self.document.nodes() {
@@ -639,7 +669,15 @@ impl<'a> Loader<'a> {
                 if primitive.mode() != Mode::Triangles {
                     return Err(format!("mesh `{name}`: only triangle lists are supported"));
                 }
-                primitives.push(self.primitive(&name, &node, &primitive, skeleton)?);
+                let mut primitive = self.primitive(&name, &node, &primitive, skeleton)?;
+                if !primitive.is_skinned()
+                    && let Some(joint) = self.bone_above(node.index(), joint_of)
+                    && joint < skeleton.skin_joints
+                    && let Ok(joint) = u16::try_from(joint)
+                {
+                    bind_whole(&mut primitive, joint);
+                }
+                primitives.push(primitive);
             }
         }
         if primitives.is_empty() {
@@ -655,6 +693,51 @@ impl<'a> Loader<'a> {
         primitive: &gltf::Primitive<'a>,
         skeleton: &Skeleton,
     ) -> Result<Primitive, String> {
+        use DataType::{F32, U8, U16, U32};
+        use gltf::Semantic;
+        let unit = [F32, U8, U16];
+        for (semantic, what, dimensions, types) in [
+            (
+                Semantic::Positions,
+                "POSITION",
+                &[Dimensions::Vec3][..],
+                &[F32][..],
+            ),
+            (Semantic::Normals, "NORMAL", &[Dimensions::Vec3], &[F32]),
+            (
+                Semantic::TexCoords(0),
+                "TEXCOORD_0",
+                &[Dimensions::Vec2],
+                &unit,
+            ),
+            (
+                Semantic::Colors(0),
+                "COLOR_0",
+                &[Dimensions::Vec3, Dimensions::Vec4],
+                &unit,
+            ),
+            (
+                Semantic::Joints(0),
+                "JOINTS_0",
+                &[Dimensions::Vec4],
+                &[U8, U16],
+            ),
+            (
+                Semantic::Weights(0),
+                "WEIGHTS_0",
+                &[Dimensions::Vec4],
+                &unit,
+            ),
+        ] {
+            let what = format!("mesh `{name}`: {what}");
+            check_layout(primitive.get(&semantic), &what, dimensions, types)?;
+        }
+        check_layout(
+            primitive.indices(),
+            &format!("mesh `{name}`: indices"),
+            &[Dimensions::Scalar],
+            &[U8, U16, U32],
+        )?;
         let read = primitive.reader(self.buffer());
         let positions: Vec<Vec3> = read
             .read_positions()
@@ -732,6 +815,23 @@ impl<'a> Loader<'a> {
         })
     }
 
+    /// The nearest bone above `node`, as a joint.
+    fn bone_above(&self, node: usize, joint_of: &dyn Fn(usize) -> Option<usize>) -> Option<usize> {
+        let mut at = self.parents[node];
+        let mut steps = 0;
+        while let Some(index) = at {
+            if let Some(joint) = joint_of(index) {
+                return Some(joint);
+            }
+            at = self.parents[index];
+            steps += 1;
+            if steps > self.parents.len() {
+                return None;
+            }
+        }
+        None
+    }
+
     fn sockets(&self, joint_of: &dyn Fn(usize) -> Option<usize>) -> Result<Vec<Socket>, String> {
         let mut sockets = Vec::new();
         for node in self.document.nodes() {
@@ -765,6 +865,32 @@ impl<'a> Loader<'a> {
                 let Some(joint) = joint_of(channel.target().node().index()) else {
                     continue;
                 };
+                let sampler = channel.sampler();
+                let outputs: (&[Dimensions], &[DataType]) = match channel.target().property() {
+                    Property::Translation | Property::Scale => {
+                        (&[Dimensions::Vec3], &[DataType::F32])
+                    }
+                    Property::Rotation => (
+                        &[Dimensions::Vec4],
+                        &[
+                            DataType::F32,
+                            DataType::I8,
+                            DataType::U8,
+                            DataType::I16,
+                            DataType::U16,
+                        ],
+                    ),
+                    // Morph target weights: not supported, skipped.
+                    Property::MorphTargetWeights => continue,
+                };
+                let what = format!("clip `{name}`");
+                check_layout(
+                    Some(sampler.input()),
+                    &what,
+                    &[Dimensions::Scalar],
+                    &[DataType::F32],
+                )?;
+                check_layout(Some(sampler.output()), &what, outputs.0, outputs.1)?;
                 let read = channel.reader(self.buffer());
                 let times: Vec<f32> = read
                     .read_inputs()
@@ -826,6 +952,23 @@ impl<'a> Loader<'a> {
         }
         Ok(clips)
     }
+}
+
+/// An unskinned primitive parented to a bone, skinned whole to `joint`
+/// so that it follows the bone (glTF would freeze it at rest otherwise).
+/// Its vertices go to creature space at rest, where a skin's are.
+fn bind_whole(primitive: &mut Primitive, joint: u16) {
+    let world = primitive.world;
+    let normal_world = glam::Mat3::from_mat4(world).inverse().transpose();
+    for p in &mut primitive.positions {
+        *p = world.transform_point3(*p);
+    }
+    for n in &mut primitive.normals {
+        *n = (normal_world * *n).normalize_or(Vec3::Z);
+    }
+    let count = primitive.positions.len();
+    primitive.joints = vec![[joint, 0, 0, 0]; count];
+    primitive.weights = vec![Vec4::X; count];
 }
 
 fn extras_of(extras: &gltf::json::Extras) -> Result<Value, String> {

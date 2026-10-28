@@ -203,6 +203,37 @@ fn malformed_input_is_an_error() {
     assert!(missing.contains("/nonexistent/creature.glb"), "{missing}");
 }
 
+#[test]
+fn an_accessor_laid_out_wrong_is_an_error_not_a_panic() {
+    // UNSIGNED_BYTE where floats go: the `gltf` readers would panic.
+    let key_times = edited(FIXTURE, |json| {
+        let input = json["animations"][0]["samplers"][0]["input"]
+            .as_u64()
+            .unwrap();
+        json["accessors"][input as usize]["componentType"] = 5121.into();
+    });
+    let error = CreatureAsset::from_glb(&key_times).unwrap_err();
+    assert!(error.contains("clip"), "{error}");
+    let positions = edited(FIXTURE, |json| {
+        let mesh = &json["meshes"][0]["primitives"][0]["attributes"]["POSITION"];
+        let position = mesh.as_u64().unwrap();
+        json["accessors"][position as usize]["componentType"] = 5121.into();
+    });
+    let error = CreatureAsset::from_glb(&positions).unwrap_err();
+    assert!(error.contains("POSITION"), "{error}");
+}
+
+/// The GLB `bytes` with its JSON changed by `edit`.
+fn edited(bytes: &[u8], edit: impl FnOnce(&mut Value)) -> Vec<u8> {
+    let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+    let json_len = word(12);
+    let mut json: Value = serde_json::from_slice(&bytes[20..20 + json_len]).unwrap();
+    let bin_at = 20 + json_len;
+    let bin = &bytes[bin_at + 8..bin_at + 8 + word(bin_at)];
+    edit(&mut json);
+    glb(&json.to_string(), bin)
+}
+
 /// A GLB from `json` and its binary chunk.
 fn glb(json: &str, bin: &[u8]) -> Vec<u8> {
     let pad = |mut bytes: Vec<u8>, with: u8| {
@@ -278,6 +309,32 @@ fn bones_outside_the_skin_are_found_under_the_armature() {
     // No indices: the triangle list 0, 1, 2.
     assert_eq!(asset.primitives[0].indices, [0, 1, 2]);
     assert!(asset.clips.is_empty());
+}
+
+#[test]
+fn a_mesh_parented_to_a_bone_follows_it() {
+    // `eye`, the same triangle half a meter up, hangs from `root` unskinned.
+    let bytes = edited(&hand_made(true), |json| {
+        let nodes = json["nodes"].as_array_mut().unwrap();
+        nodes.push(serde_json::json!({"name": "eye", "mesh": 0, "translation": [0, 0.5, 0]}));
+        let eye = nodes.len() - 1;
+        nodes[1]["children"]
+            .as_array_mut()
+            .unwrap()
+            .push(eye.into());
+    });
+    let asset = CreatureAsset::from_glb(&bytes).unwrap();
+    let eye = asset.primitives.iter().find(|p| p.mesh == "eye").unwrap();
+    assert!(eye.is_skinned());
+    assert!(eye.joints.iter().all(|&j| j == [0, 0, 0, 0]));
+    assert!(eye.weights.iter().all(|&w| w == Vec4::X));
+    assert!(close(eye.positions[2], Vec3::new(0.0, 1.5, 0.0)));
+    // The bone moved, the eye goes with it.
+    let skeleton = &asset.skeleton;
+    let mut pose = Pose::rest(skeleton);
+    pose.locals[0].t.x += 2.0;
+    let moved = pose.skin(skeleton)[0].transform_point3(eye.positions[2]);
+    assert!(close(moved, Vec3::new(2.0, 1.5, 0.0)), "{moved}");
 }
 
 #[test]
