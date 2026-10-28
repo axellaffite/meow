@@ -56,6 +56,57 @@ fn a_once_clip_plays_to_its_end_before_the_next_fades_in() {
     );
 }
 
+/// From idle, nod once then idle, both asked for in the same tick, at
+/// `fps`: the most nod shows, how much shows at 0.1 s and 0.8 s, and how
+/// much idle shows after the nod.
+fn nod_then_idle(fps: f32) -> (f32, [f32; 2], f32) {
+    let mut animator = Animator::new(&asset());
+    animator.play("idle", Play::Loop, 1.0, 0.0);
+    let mut frame = animator.update(1.0 / fps, &placement());
+    animator.update_into(1.0 / fps, &placement(), &mut frame);
+    assert!(animator.play("nod", Play::Once, 1.0, 0.15));
+    assert!(animator.play("idle", Play::Loop, 1.0, 0.25));
+    let (mut most, mut at) = (0.0f32, [0.0; 2]);
+    // The nod lasts 0.67 s, idle takes 0.25 s to come back. Tick 0 is the
+    // frame the change comes in: it starts as that frame ends.
+    for tick in 0..(1.2 * fps).round() as usize {
+        animator.update_into(1.0 / fps, &placement(), &mut frame);
+        most = most.max(animator.weight_of("nod"));
+        for (k, seconds) in [0.1, 0.8].into_iter().enumerate() {
+            if tick == (seconds * fps).round() as usize {
+                at[k] = animator.weight_of("nod");
+            }
+        }
+    }
+    (most, at, animator.weight_of("idle"))
+}
+
+#[test]
+fn a_once_clip_asked_for_just_before_the_next_still_plays() {
+    let (_, fast, _) = nod_then_idle(120.0);
+    for fps in [30.0, 60.0, 120.0] {
+        let (nod, at, idle) = nod_then_idle(fps);
+        assert_eq!(nod, 1.0, "{fps} fps: the nod shows whole");
+        assert_eq!(idle, 1.0, "{fps} fps: idle is back");
+        for (a, b) in at.iter().zip(&fast) {
+            assert!((a - b).abs() < 1e-3, "{fps} fps: {at:?} against {fast:?}");
+        }
+    }
+    // Asked for a few ticks apart, too.
+    let mut animator = Animator::new(&asset());
+    animator.play("idle", Play::Loop, 1.0, 0.0);
+    let mut frame = animator.update(1.0 / 30.0, &placement());
+    animator.play("nod", Play::Once, 1.0, 0.15);
+    animator.update_into(1.0 / 30.0, &placement(), &mut frame);
+    animator.play("idle", Play::Loop, 1.0, 0.25);
+    let mut most = 0.0f32;
+    for _ in 0..20 {
+        animator.update_into(1.0 / 30.0, &placement(), &mut frame);
+        most = most.max(animator.weight_of("nod"));
+    }
+    assert_eq!(most, 1.0);
+}
+
 #[test]
 fn mirroring_flips_the_model_determinant() {
     let mut placed = placement();

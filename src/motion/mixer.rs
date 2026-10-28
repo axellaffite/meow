@@ -171,6 +171,21 @@ pub struct Track {
     /// Told to fade this frame: like a fresh track's start, the fade
     /// starts as the frame ends, at any frame rate.
     fading: bool,
+    /// A fade out asked for later, while it still comes in: it goes on
+    /// coming in (a one-shot asked for just before the clip that follows it
+    /// still shows) and fades out on time.
+    out: Option<Out>,
+}
+
+/// A fade out to come.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Out {
+    /// Seconds before it starts.
+    left: f32,
+    /// Weight per second, then.
+    rate: f32,
+    /// Asked for this frame: it counts from the frame's end.
+    armed: bool,
 }
 
 impl Track {
@@ -193,6 +208,7 @@ impl Track {
             fresh: true,
             delay: 0.0,
             fading: false,
+            out: None,
         }
     }
 
@@ -229,6 +245,9 @@ impl Track {
             // as this frame ends.
             self.fresh = false;
             self.fading = false;
+            if let Some(out) = &mut self.out {
+                out.armed = true;
+            }
             return;
         }
         let waited = dt.min(self.delay.max(0.0));
@@ -258,8 +277,34 @@ impl Track {
             return;
         }
         self.delay -= waited;
-        let dt = dt - waited;
-        let w = self.weight + (self.target - self.weight).signum() * self.rate * dt;
+        match self.out {
+            Some(Out { armed: false, .. }) => {
+                self.out = self.out.map(|out| Out { armed: true, ..out });
+                self.move_weight(dt - waited);
+            }
+            Some(out) if out.left > dt => {
+                self.out = Some(Out {
+                    left: out.left - dt,
+                    ..out
+                });
+                self.move_weight(dt - waited);
+            }
+            Some(out) => {
+                // In until `left`, then out for the rest of the frame.
+                let left = out.left.max(waited);
+                self.move_weight(left - waited);
+                self.out = None;
+                self.target = 0.0;
+                self.rate = out.rate;
+                self.move_weight(dt - left);
+            }
+            None => self.move_weight(dt - waited),
+        }
+    }
+
+    /// Moves the weight `dt` seconds toward its target.
+    fn move_weight(&mut self, dt: f32) {
+        let w = self.weight + (self.target - self.weight).signum() * self.rate * dt.max(0.0);
         self.weight = if self.rate <= 0.0 {
             self.target
         } else if self.target >= self.weight {
@@ -270,12 +315,32 @@ impl Track {
     }
 
     fn fade_out(&mut self, fade: f32, delay: f32) {
+        let rate = if fade > 1e-4 { 1.0 / fade } else { 1e6 };
+        if self.target <= 0.0 {
+            // On its way out already: only a fade asked for now changes it.
+            if delay <= 0.0 {
+                self.rate = rate;
+                self.delay = 0.0;
+            }
+            return;
+        }
+        if delay > 0.0 {
+            // Still in: it stays so until then (or until a sooner fade).
+            let left = self.out.map_or(delay, |out| out.left.min(delay));
+            self.out = Some(Out {
+                left,
+                rate,
+                armed: self.out.is_some_and(|out| out.armed && out.left <= delay),
+            });
+            return;
+        }
         // Only the call that starts the fade waits for the frame's end: one
         // made each frame must not hold it forever.
-        self.fading = self.target > 0.0;
+        self.fading = true;
         self.target = 0.0;
-        self.rate = if fade > 1e-4 { 1.0 / fade } else { 1e6 };
-        self.delay = delay;
+        self.rate = rate;
+        self.delay = 0.0;
+        self.out = None;
     }
 
     /// The eased weight.
