@@ -21,6 +21,7 @@ fn every_class() -> Vec<&'static str> {
         super::controller::Controller::class(),
         super::flipped::FlippedView::class(),
         super::link_button::LinkButton::class(),
+        super::metal_view::MetalHostView::class(),
         super::signin::NewWindowsInPlace::class(),
         super::widgets::GrowingField::class(),
         super::widgets::PaddedCell::class(),

@@ -13,6 +13,8 @@ pub mod events;
 pub mod flipped;
 pub mod link_button;
 pub mod menus;
+#[allow(dead_code)] // examples/model_window.rs uses it until the cat window shows a model
+pub mod metal_view;
 pub mod news_bubble;
 pub mod notify;
 pub mod photo_picker;
