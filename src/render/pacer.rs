@@ -26,6 +26,8 @@ pub struct Canvas {
     pub shift: Vec2,
     /// Drawable size in pixels.
     pub pixels: (usize, usize),
+    /// The camera's pitch, degrees.
+    pub pitch: f32,
 }
 
 #[derive(Debug, Default)]
@@ -120,6 +122,7 @@ mod tests {
             quality,
             shift: Vec2::ZERO,
             pixels: (360, 450),
+            pitch: 6.0,
         }
     }
 
@@ -161,6 +164,11 @@ mod tests {
             ..look
         };
         assert!(pacer.should_draw(&frame, &retina, 0.1, false), "backing");
+        let pitched = Canvas {
+            pitch: 12.0,
+            ..look
+        };
+        assert!(pacer.should_draw(&frame, &pitched, 0.1, false), "pitch");
         assert!(
             pacer.should_draw(&moved(&frame, 1.0), &look, 0.1, false),
             "pose"

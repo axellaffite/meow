@@ -95,22 +95,13 @@ impl Quality {
             Quality::Balanced => 15.0,
         }
     }
-
-    /// From a name, `battery` or `balanced`.
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name.trim().to_ascii_lowercase().as_str() {
-            "battery" => Some(Quality::Battery),
-            "balanced" => Some(Quality::Balanced),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderSettings {
     pub theme: Theme,
     pub quality: Quality,
-    /// Seconds, for shaders that move by themselves.
+    /// Seconds, for shaders that move by themselves (none here yet).
     pub time: f32,
     /// Pixels per point: the window's backing scale (2 on Retina).
     pub scale: f32,
@@ -182,7 +173,17 @@ pub struct Renderer {
     offset: Vec2,
     /// The frame's skinning matrices for the GPU, reused each frame.
     skin: Vec<[[f32; 4]; 4]>,
+    /// Past 4 KB the skin goes in a buffer: [`SKIN_BUFFERS`] taken in turn,
+    /// made once, so a frame the GPU still reads is never written.
+    skin_buffers: Vec<Buffer>,
+    /// The next of `skin_buffers` to write.
+    skin_turn: usize,
 }
+
+/// Skin buffers a renderer writes in turn: frames in flight at most, plus
+/// the one being written ([`Offscreen`] waits for each frame, a window's
+/// view keeps two in flight).
+pub const SKIN_BUFFERS: usize = 3;
 
 impl Renderer {
     /// The pixel format targets are expected in (the window's `CAMetalLayer`).
@@ -233,6 +234,8 @@ impl Renderer {
             targets: None,
             offset: Vec2::ZERO,
             skin: Vec::new(),
+            skin_buffers: Vec::new(),
+            skin_turn: 0,
         };
         for quality in [Quality::Battery, Quality::Balanced] {
             let samples = renderer.supported_samples(quality.samples());
@@ -262,6 +265,8 @@ impl Renderer {
             targets: None,
             offset: Vec2::ZERO,
             skin: Vec::new(),
+            skin_buffers: Vec::new(),
+            skin_turn: 0,
         }
     }
 
@@ -279,7 +284,8 @@ impl Renderer {
     }
 
     /// Encodes `frame` into `command_buffer`, drawn over `target` (every
-    /// pixel written: transparent where nothing is).
+    /// pixel written: transparent where nothing is). Past 64 skin joints,
+    /// keep at most [`SKIN_BUFFERS`] - 1 frames in flight.
     pub fn draw(
         &mut self,
         command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
@@ -312,12 +318,12 @@ impl Renderer {
             self.skin
                 .resize(self.skin_joints, Mat4::IDENTITY.to_cols_array_2d());
         }
-        let skin = &self.skin;
-        let skin_buffer = if std::mem::size_of_val(skin.as_slice()) > 4096 {
-            Some(buffer_with(&self.device, skin)?)
+        let skin_buffer = if std::mem::size_of_val(self.skin.as_slice()) > 4096 {
+            Some(self.next_skin_buffer()?)
         } else {
             None
         };
+        let skin = &self.skin;
 
         let main = self.main.iter().find(|m| m.samples == samples);
         let (Some(targets), Some(main)) = (&self.targets, main) else {
@@ -399,6 +405,40 @@ impl Renderer {
         }
         encoder.endEncoding();
         Ok(())
+    }
+
+    /// The next skin buffer, holding `self.skin`: grown when too small,
+    /// else written in place.
+    fn next_skin_buffer(&mut self) -> Result<Buffer, String> {
+        let turn = self.skin_turn % SKIN_BUFFERS;
+        self.skin_turn = turn + 1;
+        let length = std::mem::size_of_val(self.skin.as_slice());
+        if self
+            .skin_buffers
+            .get(turn)
+            .is_none_or(|b| b.length() < length)
+        {
+            let buffer = self
+                .device
+                .newBufferWithLength_options(length, MTLResourceOptions::StorageModeShared)
+                .ok_or_else(|| format!("could not make a {length} byte buffer"))?;
+            if turn < self.skin_buffers.len() {
+                self.skin_buffers[turn] = buffer;
+            } else {
+                self.skin_buffers.push(buffer);
+            }
+        }
+        let buffer = self.skin_buffers[turn].clone();
+        // SAFETY: a shared buffer of at least `length` bytes, which the GPU
+        // is done reading: its frame was SKIN_BUFFERS frames ago.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.skin.as_ptr().cast::<u8>(),
+                buffer.contents().as_ptr().cast::<u8>(),
+                length,
+            );
+        }
+        Ok(buffer)
     }
 
     fn supported_samples(&self, wanted: usize) -> usize {

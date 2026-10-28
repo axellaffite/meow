@@ -154,6 +154,7 @@ impl LiveView {
             quality,
             shift,
             pixels,
+            pitch: self.pitch,
         };
         if !self.pacer.should_draw(frame, &look, time, calm) {
             return Ok(false);
@@ -255,16 +256,19 @@ pub fn current_quality(chosen: Quality) -> Quality {
 /// points, y up) is on the creature, so clicks on its empty pixels reach the
 /// apps below: a Metal layer does not give that for free. A press under way
 /// keeps the mouse, so a drag that slips off the creature goes on. Call it
-/// on every tick.
+/// on every tick: `hits` runs only while the pointer is over the window.
 pub fn follow_pointer(window: &NSWindow, mut hits: impl FnMut(Vec2) -> bool) {
     let taking = !window.ignoresMouseEvents();
     let on = (taking && NSEvent::pressedMouseButtons() != 0) || {
         let mouse = NSEvent::mouseLocation();
-        let origin = window.frame().origin;
-        hits(Vec2::new(
-            (mouse.x - origin.x) as f32,
-            (mouse.y - origin.y) as f32,
-        ))
+        let frame = window.frame();
+        let p = Vec2::new(
+            (mouse.x - frame.origin.x) as f32,
+            (mouse.y - frame.origin.y) as f32,
+        );
+        let size = Vec2::new(frame.size.width as f32, frame.size.height as f32);
+        // Away from the window, the meshes are not even looked at.
+        p.cmpge(Vec2::ZERO).all() && p.cmplt(size).all() && hits(p)
     };
     if taking != on {
         window.setIgnoresMouseEvents(!on);

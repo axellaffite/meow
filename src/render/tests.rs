@@ -169,9 +169,38 @@ fn a_shared_renderer_draws_the_same_picture() {
     assert_eq!(draw(&small, &mut first, &settings), a);
 }
 
+/// A rig past 64 joints does not fit the 4 KB of `setVertexBytes`: its
+/// skin goes through buffers made once and reused.
 #[test]
-fn qualities_have_names() {
-    assert_eq!(Quality::from_name(" Battery "), Some(Quality::Battery));
-    assert_eq!(Quality::from_name("balanced"), Some(Quality::Balanced));
-    assert_eq!(Quality::from_name("ultra"), None);
+fn a_big_skin_reuses_its_buffers() {
+    let Ok(offscreen) = Offscreen::new(64, 80) else {
+        eprintln!("no Metal device: skipped");
+        return;
+    };
+    let asset = CreatureAsset::from_glb(FIXTURE).unwrap();
+    let small = frame(&asset, false);
+    let mut big = small.clone();
+    big.skin.resize(100, Mat4::IDENTITY);
+    let settings = RenderSettings::default();
+    let mut renderer = Renderer::new(offscreen.device(), &asset).unwrap();
+    let expected = offscreen
+        .render(&mut renderer, &small, &settings, true)
+        .unwrap()
+        .rgba;
+    assert!(renderer.skin_buffers.is_empty(), "a small skin needs none");
+    let mut made = Vec::new();
+    for turn in 0..2 * SKIN_BUFFERS {
+        let rgba = offscreen
+            .render(&mut renderer, &big, &settings, true)
+            .unwrap()
+            .rgba;
+        assert_eq!(rgba, expected, "turn {turn}: the same picture");
+        if turn < SKIN_BUFFERS {
+            made.push(renderer.skin_buffers[turn].clone());
+        }
+    }
+    assert_eq!(renderer.skin_buffers.len(), SKIN_BUFFERS);
+    for (kept, first) in renderer.skin_buffers.iter().zip(&made) {
+        assert!(std::ptr::eq(&**kept, &**first), "not made again");
+    }
 }

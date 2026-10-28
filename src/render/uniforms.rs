@@ -36,7 +36,9 @@ pub struct Globals {
     pub normal_mat: M4,
     /// Target width and height in pixels, pixels per point, points per meter.
     pub viewport: F4,
-    /// Time, theme (0 light, 1 dark), quality (0, 1), mirror sign.
+    /// Time, theme (0 light, 1 dark), quality (0, 1), mirror sign. The
+    /// shaders here read only the theme; the rest is there for your own
+    /// (a shader that moves by itself, a cheaper path on Battery).
     pub misc: F4,
     pub key_dir: F4,
     pub key_col: F4,
@@ -59,7 +61,7 @@ pub struct DrawInfo {
     pub base_color: F4,
     /// Roughness, metallic, double sided (0 or 1), has vertex colours (0 or 1).
     pub params: F4,
-    /// Linear RGB added to the lit colour, unused.
+    /// Linear RGB added to the lit colour.
     pub emissive: F4,
 }
 
@@ -163,8 +165,9 @@ pub fn globals(
         super::Quality::Battery => 0.0,
         super::Quality::Balanced => 1.0,
     };
-    // In view space: the key up and to the viewer's left, the back light
-    // behind on the right.
+    // The look: change the lights here (and the shadow's tint, `SHADOW` in
+    // post.metal). In view space: the key up and to the viewer's left, the
+    // back light behind on the right.
     let key_dir = Vec3::new(-0.45, 0.70, 0.55).normalize();
     let back_dir = Vec3::new(0.55, 0.50, -0.65).normalize();
 

@@ -18,7 +18,7 @@ struct Globals {
     float4x4 proj;
     float4x4 normal_mat;
     float4 viewport;   // px w, px h, px per pt, pt per m
-    float4 misc;       // time, dark, quality, mirror
+    float4 misc;       // time, dark, quality, mirror (only dark read here)
     float4 key_dir;    // xyz toward the light (view space), w intensity
     float4 key_col;
     float4 back_dir;   // w intensity
