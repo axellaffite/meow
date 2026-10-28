@@ -3,7 +3,7 @@ and examples use: four bones (one a non-deform ctrl_* data bone), one
 socket, one skinned box with two materials (fur, and two eyes on its front), and
 two clips.
 
-Usage (from the repository root):
+Usage (from the repository root; tested with Blender 5.2):
     blender -b --factory-startup -P tools/blender/make_fixture.py -- tests/fixtures/mini_creature.glb
 
 Blender meters, Z up, the creature facing -Y; the exporter writes glTF Y up,
