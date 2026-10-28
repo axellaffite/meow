@@ -252,7 +252,7 @@ fn rest_shadow(asset: &CreatureAsset) -> Option<Shadow> {
     (high > low).then(|| Shadow {
         height: 0.0,
         center_x: (low + high) / 2.0,
-        radius: (high - low) / 2.0 * 0.9,
+        radius: (high - low) / 2.0 * 1.1,
     })
 }
 

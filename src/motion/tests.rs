@@ -82,5 +82,5 @@ fn procedural_layers_go_on_top_of_the_clips() {
     let moved = frame.skin[head].transform_point3(Vec3::new(0.0, 0.6, 0.0));
     assert!((moved.x - 0.1).abs() < 1e-4, "{moved}");
     assert!(frame.skin.iter().all(|m| m.is_finite()));
-    assert!(frame.shadow.is_some_and(|s| (s.radius - 0.27).abs() < 1e-3));
+    assert!(frame.shadow.is_some_and(|s| (s.radius - 0.33).abs() < 1e-3));
 }

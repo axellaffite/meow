@@ -1,6 +1,7 @@
 """Builds tests/fixtures/mini_creature.glb, the tiny creature the 3D tests
 and examples use: four bones (one a non-deform ctrl_* data bone), one
-socket, one skinned box with two materials, and two clips.
+socket, one skinned box with two materials (fur, and two eyes on its front), and
+two clips.
 
 Usage (from the repository root):
     blender -b --factory-startup -P tools/blender/make_fixture.py -- tests/fixtures/mini_creature.glb
@@ -107,6 +108,8 @@ def make_body(scene, rig):
     mesh = bpy.data.meshes.new("body_mesh")
     bm = bmesh.new()
     bmesh.ops.create_cube(bm, size=1.0)
+    # Each face cut in 3 x 3: two cells of the front become the eyes.
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=2, use_grid_fill=True)
     for v in bm.verts:
         v.co = Vector((v.co.x * 0.6, v.co.y * 0.3, v.co.z * 0.7 + 0.35))
     bm.to_mesh(mesh)
@@ -116,9 +119,11 @@ def make_body(scene, rig):
 
     for name, color, roughness in MATERIALS:
         mesh.materials.append(make_material(name, color, roughness))
-    # The front face (normal -Y) wears the eyes' material.
+    # The front's (normal -Y) top corner cells wear the eyes' material.
     for poly in mesh.polygons:
-        poly.material_index = 1 if poly.normal.y < -0.5 else 0
+        c = poly.center
+        eye = poly.normal.y < -0.5 and c.z > 0.5 and abs(c.x) > 0.1
+        poly.material_index = 1 if eye else 0
         poly.use_smooth = False
 
     uvs = mesh.uv_layers.new(name="UVMap")
