@@ -201,6 +201,7 @@ changes.
 | `src/update.rs`            | Releases: `version.json`, download, staging, swap and relaunch |
 | `src/slack/`               | Live Slack: sign-in credentials, Web API, background client, message model and `mrkdwn` formatting |
 | `src/routines.rs`          | Scheduled tasks: `meow-schedule` parsing, when each is due, prompts |
+| `src/creature/`            | A 3D creature from a GLB: skeleton, sockets, clips, poses (docs/3d.md) |
 | `src/app/`                 | The app: the 30 Hz tick, the windows, the chat, tasks, Activity, agents |
 | `src/ui/`                  | AppKit: speech-bubble window, sidebar, chat/task/plan pages, theme, menus |
 

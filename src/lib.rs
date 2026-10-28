@@ -12,6 +12,7 @@ pub mod claude;
 pub mod clock;
 pub mod context;
 pub mod conversations;
+pub mod creature;
 pub mod guard;
 pub mod legacy;
 pub mod markdown;
