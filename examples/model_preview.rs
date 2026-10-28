@@ -1,15 +1,18 @@
 //! Renders a 3D creature offscreen to a PNG sheet, no window needed: eight
 //! frames of it idling, then nodding from 0.5 s, over a light desktop (top
 //! row, light theme) and a dark one (bottom row, dark theme).
-//! `cargo run --example model_preview -- [creature.glb] out.png`
-//! (the test fixture by default).
+//! `cargo run --example model_preview -- [creature.glb] [out.png]`
+//! (the test fixture and model.png by default).
 
 use glam::Vec2;
 use meow::creature::CreatureAsset;
 use meow::motion::{Animator, Placement, Play};
 use meow::render::{Offscreen, Quality, RenderSettings, Renderer, Theme};
 
-const FIXTURE: &str = "tests/fixtures/mini_creature.glb";
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/mini_creature.glb"
+);
 /// One cell, in points, drawn at 2x.
 const CELL: (u32, u32) = (120, 150);
 const SCALE: u32 = 2;
@@ -19,11 +22,21 @@ const DARK: [u8; 3] = [38, 40, 46];
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let is_model = |path: &str| {
+        let path = path.to_ascii_lowercase();
+        path.ends_with(".glb") || path.ends_with(".gltf")
+    };
     let (model, out) = match args.as_slice() {
         [] => (FIXTURE.to_string(), "model.png".to_string()),
+        // A lone model is read, never written over.
+        [model] if is_model(model) => (model.clone(), "model.png".to_string()),
         [out] => (FIXTURE.to_string(), out.clone()),
         [model, out, ..] => (model.clone(), out.clone()),
     };
+    if is_model(&out) {
+        eprintln!("model_preview: {out} looks like a model, not a PNG to write");
+        std::process::exit(1);
+    }
     if let Err(error) = run(&model, &out) {
         eprintln!("model_preview: {error}");
         std::process::exit(1);

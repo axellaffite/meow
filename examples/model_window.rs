@@ -32,7 +32,10 @@ use objc2_foundation::{NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize,
 
 use ui::metal_view::{LiveView, current_quality, follow_pointer};
 
-const FIXTURE: &str = "tests/fixtures/mini_creature.glb";
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/mini_creature.glb"
+);
 /// The window, points.
 const SIZE: NSSize = NSSize::new(180.0, 220.0);
 const TICK_SECONDS: f64 = 1.0 / 30.0;
