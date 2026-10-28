@@ -60,7 +60,7 @@ define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "MeowSignInUIDelegate"]
-    struct NewWindowsInPlace;
+    pub(super) struct NewWindowsInPlace;
 
     unsafe impl NSObjectProtocol for NewWindowsInPlace {}
 

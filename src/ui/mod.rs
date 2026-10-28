@@ -5,6 +5,8 @@ pub mod bubble;
 pub mod cat_window;
 pub mod chat_page;
 pub mod chat_window;
+#[cfg(test)]
+mod class_tests;
 pub mod controller;
 pub mod emoji_text;
 pub mod events;
