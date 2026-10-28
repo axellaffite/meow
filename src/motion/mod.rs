@@ -207,6 +207,12 @@ impl Animator {
         frame.shadow = self.shadow;
     }
 
+    /// The joints' world matrices as of the last [`Animator::write_frame`]:
+    /// where its sockets are (`pose::socket_in_window`), with no allocation.
+    pub fn world(&self) -> &[Mat4] {
+        &self.world
+    }
+
     /// [`Animator::advance`] then [`Animator::write_frame`]: nothing is
     /// allocated once `frame`'s buffers are sized.
     pub fn update_into(&mut self, dt: f32, placement: &Placement, frame: &mut Frame) {

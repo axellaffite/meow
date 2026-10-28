@@ -5,7 +5,7 @@
 //! matrices (glTF space, meters), and [`Pose::skin`] turns those into the
 //! matrices the vertex shader skins with.
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
 
 use super::asset::{Skeleton, Socket};
 
@@ -123,6 +123,15 @@ pub fn socket_matrix(world: &[Mat4], socket: &Socket) -> Mat4 {
 /// Where `socket` is in the world.
 pub fn socket_position(world: &[Mat4], socket: &Socket) -> Vec3 {
     socket_matrix(world, socket).transform_point3(Vec3::ZERO)
+}
+
+/// Where `socket` is in the window, points, y up: `to_window` takes
+/// creature space to window points as drawn (`render::Renderer::to_window`,
+/// or `frame.model` without the camera). Where a bubble or a prop goes.
+pub fn socket_in_window(world: &[Mat4], socket: &Socket, to_window: Mat4) -> Vec2 {
+    to_window
+        .transform_point3(socket_position(world, socket))
+        .truncate()
 }
 
 #[cfg(test)]

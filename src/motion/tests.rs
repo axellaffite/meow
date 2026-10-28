@@ -1,4 +1,5 @@
 use super::*;
+use crate::creature::pose::socket_in_window;
 
 const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/mini_creature.glb");
 
@@ -134,4 +135,25 @@ fn procedural_layers_go_on_top_of_the_clips() {
     assert!((moved.x - 0.1).abs() < 1e-4, "{moved}");
     assert!(frame.skin.iter().all(|m| m.is_finite()));
     assert!(frame.shadow.is_some_and(|s| (s.radius - 0.33).abs() < 1e-3));
+}
+
+#[test]
+fn a_socket_follows_its_bone_into_the_window() {
+    let asset = asset();
+    let socket = asset.socket("socket_head").unwrap();
+    let mut animator = Animator::new(&asset);
+    animator.play("idle", Play::Loop, 1.0, 0.0);
+    let mut frame = animator.update(0.0, &placement());
+    // 1.06 m up at rest: 159 points over the origin, 150 points a meter.
+    let at = socket_in_window(animator.world(), socket, frame.model);
+    assert!((at - Vec2::new(90.0, 179.0)).length() < 0.1, "{at}");
+    let head = asset.skeleton.find("head").unwrap();
+    animator.advance(0.0);
+    animator.pose_mut().locals[head].t.x += 0.1;
+    animator.write_frame(&placement(), &mut frame);
+    let moved = socket_in_window(animator.world(), socket, frame.model);
+    assert!(
+        (moved - at - Vec2::new(15.0, 0.0)).length() < 0.1,
+        "{moved}"
+    );
 }
