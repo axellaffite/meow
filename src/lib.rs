@@ -17,6 +17,7 @@ pub mod guard;
 pub mod legacy;
 pub mod markdown;
 pub mod mcp;
+pub mod motion;
 pub mod plan;
 pub mod routines;
 pub mod rsvp;
