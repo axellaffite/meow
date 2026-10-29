@@ -51,6 +51,7 @@ fn the_first_poll_dresses_the_cat_and_sizes_the_bubble_as_saved() {
     feature.poll(&mut host);
     assert_eq!(host.worn, [Coat::Willow]);
     assert_eq!(host.sizes, [WindowSize::Large.points()]);
+    assert_eq!(host.news_shown, [true]);
 }
 
 #[test]
@@ -70,6 +71,7 @@ fn the_appearance_settings_list_coats_photo_themes_window_sizes_and_styles() {
             "choice: Window size = [Standard] | Large | Extra Large",
             "choice: Style = [Pixel Art] | Classic",
             "note: Changing the style relaunches Meow.",
+            "[x] toggle: Show news over the cat",
         ]
     );
 }
@@ -110,6 +112,29 @@ fn picking_a_window_size_resizes_the_bubble_and_saves_it() {
         host.settings.get::<Appearance>().unwrap().window_size,
         WindowSize::Huge
     );
+}
+
+#[test]
+fn turning_the_news_bubble_off_hides_it_and_saves_it() {
+    let mut feature = theme(Appearance::default());
+    let mut host = FakeHost::default();
+    feature.poll(&mut host);
+    change(&feature, "Show news over the cat", "");
+    feature.poll(&mut host);
+    assert_eq!(host.news_shown, [true, false]);
+    assert!(host.settings.get::<Appearance>().unwrap().hide_news_bubble);
+    assert_eq!(
+        describe_settings(&feature.settings()).last().unwrap(),
+        "toggle: Show news over the cat"
+    );
+    // Saved off, it stays off at the next launch.
+    let mut host = FakeHost::default();
+    theme(Appearance {
+        hide_news_bubble: true,
+        ..Appearance::default()
+    })
+    .poll(&mut host);
+    assert_eq!(host.news_shown, [false]);
 }
 
 #[test]

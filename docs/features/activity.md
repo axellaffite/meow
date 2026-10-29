@@ -12,3 +12,4 @@ shows a macOS banner (the bundled app asks permission once; a `cargo run` build
 posts through `osascript`). Opening the page marks everything read; `×`
 dismisses one item, **Clear all** empties the list, and items go after 7 days.
 Clicking an item opens what it is about: a Slack message opens the Slack page scrolled to that message, highlighted (or to its thread when the reply itself is not loaded).
+While news is unread, a bubble over the cat shows where it comes from; turn off **Show news over the cat** in Settings › Appearance to keep only the cat's `!`.

@@ -1,5 +1,6 @@
 //! How Meow looks, from Settings › Appearance: the coat the cat wears, the
-//! size the chat bubble opens at and the style, kept across launches, and themes made
+//! size the chat bubble opens at, the style and the news bubble over the cat,
+//! kept across launches, and themes made
 //! from a photo of the user's cat: the photo is shrunk in the background,
 //! then a run that may only read that copy reports its colors.
 
@@ -29,6 +30,7 @@ enum Msg {
     Wear(Coat),
     Resize(WindowSize),
     Restyle(Style),
+    ShowNews(bool),
     AddFromPhoto,
     RemoveCustom,
 }
@@ -201,7 +203,8 @@ impl Theme {
 
     /// The Appearance section: the themes, the built-in ones then the
     /// user's own, the worn one picked; adding one from a photo and removing
-    /// the worn one when it is the user's; then window sizes and styles.
+    /// the worn one when it is the user's; then window sizes, styles and
+    /// the news bubble.
     fn appearance_entries(&self) -> Vec<SettingEntry> {
         let inbox = self.inbox.sender();
         let coats = self.appearance.coats();
@@ -255,6 +258,13 @@ impl Theme {
         entries.push(SettingEntry::Note(
             "Changing the style relaunches Meow.".to_string(),
         ));
+        let shown = !self.appearance.hide_news_bubble;
+        let news = inbox.clone();
+        entries.push(SettingEntry::Toggle {
+            title: "Show news over the cat".to_string(),
+            on: shown,
+            run: Box::new(move || news.send(Msg::ShowNews(!shown))),
+        });
         entries
     }
 }
@@ -264,6 +274,7 @@ impl Feature for Theme {
         if std::mem::take(&mut self.first) {
             host.wear(self.appearance.coat);
             host.resize_chat(self.appearance.window_size.points());
+            host.show_news(!self.appearance.hide_news_bubble);
         }
         for message in self.inbox.drain() {
             match message {
@@ -286,6 +297,16 @@ impl Feature for Theme {
                     );
                 }
                 Msg::Restyle(style) => self.restyle(style, host),
+                Msg::ShowNews(shown) => {
+                    host.show_news(shown);
+                    self.apply(
+                        Appearance {
+                            hide_news_bubble: !shown,
+                            ..self.appearance.clone()
+                        },
+                        host,
+                    );
+                }
                 Msg::AddFromPhoto => self.add_from_photo(host),
                 Msg::RemoveCustom => self.apply(self.appearance.without_current_custom(), host),
             }

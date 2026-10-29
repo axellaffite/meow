@@ -1,6 +1,7 @@
 //! How Meow looks, picked from the cat's menu: the coat the cat wears (a
 //! built-in one or a theme from a photo of the user's cat), the size the
-//! chat bubble opens at and the style. Saved among the settings (see
+//! chat bubble opens at, the style and whether news shows in a bubble over
+//! the cat. Saved among the settings (see
 //! `settings::Store`).
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,9 @@ pub struct Appearance {
     pub window_size: WindowSize,
     /// Pixel art or classic; read at launch.
     pub style: Style,
+    /// Unread news shows only the cat's `!`, not the bubble of where it
+    /// comes from.
+    pub hide_news_bubble: bool,
 }
 
 /// How big the chat bubble opens; it can still be resized by hand.
