@@ -14,10 +14,21 @@ fn walking_cat_moves_toward_facing() {
     assert!((cat.x - (100.0 + WALK_SPEED)).abs() < 1e-9);
 }
 
+/// Walks the cat for a second, then lets it finish clawing the wall if it
+/// stopped to.
+fn walk_into_the_edge(cat: &mut Cat) {
+    let bounds = Bounds::new(0.0, 500.0, 1000.0);
+    let mut rng = Rng::new(1);
+    cat.update(1.0, bounds, IDLE, &mut rng);
+    while cat.activity() == Activity::Scratching {
+        cat.update(0.1, bounds, IDLE, &mut rng);
+    }
+}
+
 #[test]
 fn cat_turns_around_at_right_edge() {
     let mut cat = Cat::new(495.0);
-    cat.update(1.0, Bounds::new(0.0, 500.0, 1000.0), IDLE, &mut Rng::new(1));
+    walk_into_the_edge(&mut cat);
     assert_eq!(cat.x, 500.0);
     assert_eq!(cat.facing, Facing::Left);
 }
@@ -26,7 +37,7 @@ fn cat_turns_around_at_right_edge() {
 fn cat_turns_around_at_left_edge() {
     let mut cat = Cat::new(5.0);
     cat.facing = Facing::Left;
-    cat.update(1.0, Bounds::new(0.0, 500.0, 1000.0), IDLE, &mut Rng::new(1));
+    walk_into_the_edge(&mut cat);
     assert_eq!(cat.x, 0.0);
     assert_eq!(cat.facing, Facing::Right);
 }

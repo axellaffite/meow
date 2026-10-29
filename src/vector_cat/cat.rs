@@ -6,7 +6,7 @@
 use crate::sprites::{CANVAS_H, Coat};
 
 use super::paint::{Color, P, Pen, Shape, rotate_about, scale_about, translate};
-use super::stance::Stance;
+use super::stance::{BOW_PIVOT, Stance};
 
 /// The ground: the bottom edge of the canvas.
 const GROUND: f64 = CANVAS_H as f64;
@@ -145,7 +145,11 @@ fn leg(pen: &Pen, inks: &Inks, stance: &Stance, i: usize) {
     let (top, paw) = match leg.paw {
         // A raised paw swings from the shoulder.
         Some(paw) => ((HIPS[i], top_y - 1.0), paw),
-        None => ((HIPS[i], top_y), (HIPS[i] + leg.dx, PAW_Y - leg.lift)),
+        None => {
+            let x = HIPS[i] + leg.dx;
+            let y = PAW_Y - leg.lift - stance.slope * (x - BOW_PIVOT);
+            ((HIPS[i], top_y), (x, y))
+        }
     };
     let shade = |color: Color| if FAR[i] { inks.far(color) } else { color };
     pen.stroke(&Shape::at(top).line(paw), shade(inks.fur), LEG_WIDTH);

@@ -181,3 +181,59 @@ fn blinking_shuts_the_eyes() {
         assert!(changed > PX * PX, "{coat:?}: {changed} pixels");
     }
 }
+
+#[test]
+fn stretching_animals_keep_their_paws_on_the_ground() {
+    for coat in Coat::ALL {
+        for pose in [Pose::Bow(0), Pose::Bow(1), Pose::Arch(0), Pose::Arch(1)] {
+            let rows = rows_painted(&look(pose), coat);
+            assert!(rows[rows.len() - 1], "{coat:?} {pose:?} touches the ground");
+            assert_ne!(
+                coverage(&look(pose), coat),
+                coverage(&look(Pose::Stand), coat),
+                "{coat:?} {pose:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn bowing_reaches_ahead_and_arching_rises_above_the_back() {
+    let reach = |pose| {
+        let columns = columns_painted(&look(pose), Coat::Ginger);
+        columns.iter().rposition(|&c| c).unwrap()
+    };
+    let head_top = |pose| {
+        let (w, alpha) = coverage(&look(pose), Coat::Ginger);
+        let head = 16 * PX..w;
+        (0..alpha.len() / w)
+            .find(|&y| head.clone().any(|x| alpha[y * w + x] > 128))
+            .unwrap()
+    };
+    assert!(reach(Pose::Bow(1)) > reach(Pose::Stand));
+    let back = |pose| {
+        let (w, alpha) = coverage(&look(pose), Coat::Ginger);
+        let x = 11 * PX;
+        (0..alpha.len() / w)
+            .find(|&y| alpha[y * w + x] > 128)
+            .unwrap()
+    };
+    assert!(back(Pose::Arch(1)) + 2 * PX <= back(Pose::Stand));
+    assert!(
+        head_top(Pose::Bow(1)) > head_top(Pose::Stand),
+        "the head goes down"
+    );
+}
+
+#[test]
+fn scratching_animals_reach_the_wall_from_the_floor() {
+    for coat in Coat::ALL {
+        let columns = columns_painted(&look(Pose::Scratch(0)), coat);
+        assert!(columns[columns.len() - 1], "{coat:?} paws on the wall");
+        assert_ne!(
+            coverage(&look(Pose::Scratch(0)), coat),
+            coverage(&look(Pose::Scratch(2)), coat),
+            "{coat:?} the paws move"
+        );
+    }
+}

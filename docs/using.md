@@ -45,6 +45,11 @@ Everything the cat and its bubble respond to. For an overview, see the
   theme, and **Remove** deletes the one being worn. They are saved in
   `~/Library/Application Support/Meow/settings.json`. The bubble's size and
   the style (Pixel Art or Classic, which relaunches Meow) are there too.
+- **The cat stretches** now and then, and often as it wakes from a nap: a bow,
+  front paws reaching ahead and rump in the air, or its back arched high,
+  eyes shut. Walking into the edge of the screen, it sometimes rears up
+  against it and claws it for a moment before turning back (not at an edge
+  that leads on to another screen). Dédé the pig does neither.
 - **Now and then the cat coughs up a hairball** (or on demand: **Hairball** in
   its menu). It stays on the floor until you clean it (scrub it with the mouse
   button down, or click it a few times, until it sparkles and is gone), or

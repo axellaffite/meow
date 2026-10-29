@@ -5,9 +5,11 @@
 mod hairball;
 mod play;
 mod shake;
+mod stretch;
 
 pub use hairball::HAIRBALL_CHANCE;
 pub use play::{CAT_WIDTH, PROP_WIDTH, Prey, PropView};
+pub use stretch::{SCRATCH_CHANCE, STRETCH_CHANCE, Stretch, WAKE_STRETCH_CHANCE};
 
 use crate::sprites::{Bubble, Facing, Kick, Look, Pose};
 use hairball::Hairball;
@@ -93,6 +95,10 @@ pub enum Activity {
     Hacking,
     /// Dédé, turned around to his poop: sniffing it, then eating it.
     Gobbling,
+    /// Stretching: a bow or an arched back.
+    Stretching,
+    /// Reared up against the screen edge, clawing it.
+    Scratching,
 }
 
 /// Where the cat may go: `x` is the window's left edge, `y` its height above the ground.
@@ -240,6 +246,10 @@ pub struct Cat {
     pig: bool,
     /// Seconds since Dédé turned around to his poop.
     gobble_for: f64,
+    /// How the cat stretches this time, and for how long it has been
+    /// stretching or clawing the wall.
+    stretch: Stretch,
+    stretch_for: f64,
     activity: Activity,
     time_left: f64,
     clock: f64,
@@ -280,6 +290,8 @@ impl Cat {
             hairball: None,
             pig: false,
             gobble_for: 0.0,
+            stretch: Stretch::Bow,
+            stretch_for: 0.0,
             activity: Activity::Walking,
             time_left: 6.0,
             clock: 0.0,
@@ -380,7 +392,9 @@ impl Cat {
             | Activity::Chasing
             | Activity::Hunting
             | Activity::Hacking
-            | Activity::Gobbling => {}
+            | Activity::Gobbling
+            | Activity::Stretching
+            | Activity::Scratching => {}
         }
         self.x = self.x.clamp(bounds.min_x, bounds.max_x);
         self.y = 0.0;
@@ -408,7 +422,15 @@ impl Cat {
             Activity::Hunting => return self.hunt(dt, bounds, rng),
             Activity::Hacking => return self.hack(dt, bounds),
             Activity::Gobbling => return self.gobble(dt),
-            Activity::Walking => self.walk(dt, bounds.min_x, bounds.max_x),
+            Activity::Stretching => return self.stretch(dt, rng),
+            Activity::Scratching => return self.scratch(dt, rng),
+            Activity::Walking => {
+                if let Some(wall) = self.walk(dt, bounds.min_x, bounds.max_x)
+                    && self.maybe_scratch(wall, bounds, rng)
+                {
+                    return;
+                }
+            }
             _ => {}
         }
 
@@ -491,7 +513,9 @@ impl Cat {
         }
     }
 
-    fn walk(&mut self, dt: f64, min_x: f64, max_x: f64) {
+    /// Walks on, turning back at the screen's edges; returns the side of
+    /// the edge it walked into, if any.
+    fn walk(&mut self, dt: f64, min_x: f64, max_x: f64) -> Option<Facing> {
         let step = WALK_SPEED * dt;
         match self.facing {
             Facing::Right => self.x += step,
@@ -500,9 +524,13 @@ impl Cat {
         if self.x >= max_x {
             self.x = max_x;
             self.facing = Facing::Left;
+            Some(Facing::Right)
         } else if self.x <= min_x {
             self.x = min_x;
             self.facing = Facing::Right;
+            Some(Facing::Left)
+        } else {
+            None
         }
     }
 
@@ -515,12 +543,21 @@ impl Cat {
                 self.release_mouse(bounds, rng)
             } else if roll >= 1.0 - SNACK_CHANCE - MOUSE_CHANCE - HAIRBALL_CHANCE {
                 self.cough_up()
+            } else if roll >= 1.0 - SNACK_CHANCE - MOUSE_CHANCE - HAIRBALL_CHANCE - STRETCH_CHANCE {
+                self.stretch_out(rng)
             } else {
                 false
             };
             if started {
                 return;
             }
+        }
+        // Waking from a nap, a cat stretches before anything else.
+        if self.activity == Activity::Sleeping
+            && roll < WAKE_STRETCH_CHANCE
+            && self.stretch_out(rng)
+        {
+            return;
         }
         let (activity, min, max) = match self.activity {
             Activity::Walking if roll < 0.2 => (Activity::Sleeping, 12.0, 30.0),
@@ -535,7 +572,9 @@ impl Cat {
             | Activity::Chasing
             | Activity::Hunting
             | Activity::Hacking
-            | Activity::Gobbling => (Activity::Walking, 4.0, 10.0),
+            | Activity::Gobbling
+            | Activity::Stretching
+            | Activity::Scratching => (Activity::Walking, 4.0, 10.0),
         };
         if activity == Activity::Walking {
             self.facing = if rng.next_f64() < 0.5 {
@@ -656,6 +695,8 @@ impl Cat {
             }
             Activity::Hacking => self.hack_pose(),
             Activity::Gobbling => self.gobble_pose(),
+            Activity::Stretching => self.stretch_pose(),
+            Activity::Scratching => self.scratch_pose(),
             Activity::Walking => Pose::Walk((self.clock * WALK_FPS) as u64 as u8 % 4),
             Activity::Sleeping => Pose::Sleep,
             Activity::Held => self.dangle_pose(),
@@ -666,7 +707,11 @@ impl Cat {
             }
             Activity::Idle => Pose::Stand,
         };
-        let bubble = if matches!(self.activity, Activity::Held | Activity::Clinging) {
+        let reared = matches!(
+            self.activity,
+            Activity::Held | Activity::Clinging | Activity::Scratching
+        );
+        let bubble = if reared {
             // The cat's body fills the bubble's spot above its head.
             Bubble::None
         } else if inputs.busy {
@@ -690,5 +735,7 @@ impl Cat {
 mod hairball_tests;
 #[cfg(test)]
 mod play_tests;
+#[cfg(test)]
+mod stretch_tests;
 #[cfg(test)]
 mod tests;

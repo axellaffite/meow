@@ -10,6 +10,7 @@ mod hairball;
 mod hanging;
 mod pig;
 mod play;
+mod stretch;
 
 pub use coat::{Animal, Coat, Palette};
 pub use hairball::SPIT;
@@ -88,6 +89,14 @@ pub enum Pose {
     Hack(u8),
     /// Rump lowered, tail up, pooping: 0 settles, 1 pushes, `SPIT` lets go.
     Squat(u8),
+    /// Stretching the front legs, rump in the air: 0 eases into it, 1 all
+    /// the way.
+    Bow(u8),
+    /// Stretching with the back arched: 0 eases into it, 1 all the way.
+    Arch(u8),
+    /// Reared up against the wall it faces, clawing it; the phase moves
+    /// the front paws.
+    Scratch(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -406,6 +415,9 @@ pub fn render(look: &Look, coat: Coat) -> Frame {
         Pose::Swat(phase) => play::draw_swatting(&mut grid, phase),
         Pose::Hack(phase) => hairball::draw_hacking(&mut grid, phase),
         Pose::Squat(phase) => pig::draw_squatting(&mut grid, phase),
+        Pose::Bow(phase) => stretch::draw_bowing(&mut grid, phase),
+        Pose::Arch(phase) => stretch::draw_arching(&mut grid, phase),
+        Pose::Scratch(phase) => stretch::draw_scratching(&mut grid, phase),
     }
     draw_bubble(&mut grid, look.bubble);
 

@@ -21,7 +21,7 @@ use crate::sprites::{BUBBLE_H, CANVAS_H, CANVAS_W, Coat, Facing, Kick, Look, PRO
 
 pub use paint::Bitmap;
 use paint::{Pen, mirror};
-use stance::Stance;
+use stance::{BOW_PIVOT, Stance};
 
 /// Draws `look` in `coat` on `ctx`, set up with the canvas's top left corner
 /// at the origin, y down and one unit per sprite pixel.
@@ -102,6 +102,12 @@ fn draw_pose(pen: &Pen, pose: Pose, coat: Coat) {
         Pose::Swat(phase) => stand(pen, Stance::swatting(phase)),
         Pose::Hack(phase) => stand(pen, Stance::hacking(phase)),
         Pose::Squat(phase) => stand(pen, Stance::squatting(phase)),
+        Pose::Bow(phase) => {
+            let stance = Stance::bowing(phase);
+            pen.transformed(tip(stance.slope), |pen| stand(pen, stance))
+        }
+        Pose::Arch(phase) => stand(pen, Stance::arching(phase)),
+        Pose::Scratch(phase) => pen.transformed(CLING, |pen| stand(pen, Stance::scratching(phase))),
         Pose::Cling(phase) => pen.transformed(CLING, |pen| stand(pen, Stance::walking(phase))),
         Pose::Ceiling(phase) => pen.transformed(CEILING, |pen| stand(pen, Stance::walking(phase))),
         Pose::Sleep if coat.is_pig() => pig::sleeping(pen, coat),
@@ -113,6 +119,19 @@ fn draw_pose(pen: &Pen, pose: Pose, coat: Coat) {
                 cat::hanging(pen, coat, kicked(kick))
             }
         }),
+    }
+}
+
+/// Tips the animal `slope` rows per column about `BOW_PIVOT`: the front
+/// sinks, the back rises, verticals stay vertical.
+fn tip(slope: f64) -> CGAffineTransform {
+    CGAffineTransform {
+        a: 1.0,
+        b: slope,
+        c: 0.0,
+        d: 1.0,
+        tx: 0.0,
+        ty: -slope * BOW_PIVOT,
     }
 }
 

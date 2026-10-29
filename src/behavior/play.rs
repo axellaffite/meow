@@ -100,6 +100,8 @@ impl Cat {
                 | Activity::Hunting
                 | Activity::Hacking
                 | Activity::Gobbling
+                | Activity::Stretching
+                | Activity::Scratching
         )
     }
 

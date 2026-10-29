@@ -68,6 +68,10 @@ Meow isn't only useful, it's good company.
   several screens, toss it from one to the other.
 - **Feed it** a bowl of kibble, or **let a mouse in** for it to chase, from its
   menu (right-click the cat).
+- **Watch it stretch**: now and then, and often when it wakes up, it stretches,
+  front paws reaching ahead with its rump in the air, or with its back arched
+  high. Walking into the edge of the screen, it may stop to sharpen its claws
+  on it.
 - **Clean up after it**: now and then it coughs up a hairball that stays on the
   floor until you scrub it away, or for 10 seconds.
 - **Dress it like yours**: pick a coat (Ginger, Willow, Alfie, a corgi, or

@@ -6,7 +6,7 @@ use crate::sprites::{CANVAS_H, Coat};
 
 use super::cat::{Inks, scruff, soft_triangle};
 use super::paint::{Color, P, Pen, Shape, rotate_about, translate};
-use super::stance::Stance;
+use super::stance::{BOW_PIVOT, Stance};
 
 const GROUND: f64 = CANVAS_H as f64;
 /// Where each leg leaves the body, far hind, near hind, far front, near front.
@@ -105,7 +105,10 @@ fn leg(pen: &Pen, pig: &Pink, stance: &Stance, i: usize) {
         Some(paw) => ((HIPS[i], HIP_Y - 1.5), (paw.0, paw.1 + 0.5)),
         None => (
             (HIPS[i], HIP_Y + if i < 2 { stance.rump * 0.5 } else { 0.0 }),
-            (HIPS[i] + leg.dx, GROUND - 0.05 - leg.lift),
+            (
+                HIPS[i] + leg.dx,
+                GROUND - 0.05 - leg.lift - stance.slope * (HIPS[i] + leg.dx - BOW_PIVOT),
+            ),
         ),
     };
     let ankle = (foot.0, foot.1 - HOOF_H);

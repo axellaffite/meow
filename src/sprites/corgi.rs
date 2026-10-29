@@ -26,7 +26,7 @@ const EYES_CLOSED: &str = "..tt........kokommokok..";
 /// Columns of the legs (the near-side one of each two-pixel leg).
 const LEG_XS: [usize; 4] = [3, 6, 13, 16];
 /// The row of the paws, below the legs drawn in `BODY`.
-const PAW_ROW: usize = BODY.len();
+pub(super) const PAW_ROW: usize = BODY.len();
 
 /// Where the head starts, and how many rows it spans, when it lowers it to eat.
 pub(super) const HEAD_X: usize = 12;

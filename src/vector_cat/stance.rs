@@ -22,6 +22,16 @@ const WALK_LIFTS: [[f64; 4]; 4] = [
 const HACK_HEADS: [(f64, f64); 3] = [(1.0, 0.0), (2.0, 1.0), (3.0, 1.0)];
 /// Head drop between bites, as in the sprite.
 const BITE_DROPS: [f64; 2] = [3.0, 4.0];
+/// The column a bow tips the body about: behind it rises, ahead sinks.
+pub(super) const BOW_PIVOT: f64 = 11.0;
+/// How steeply the body tips in each `Pose::Bow` phase, and how far the
+/// front paws reach ahead.
+const BOWS: [(f64, f64); 2] = [(0.1, 1.2), (0.2, 3.2)];
+/// How high the back rises in each `Pose::Arch` phase.
+const ARCHES: [f64; 2] = [1.5, 4.0];
+/// The front paws' shift for each `Pose::Scratch` phase, raking the wall in
+/// turn.
+const SCRATCH_STRIDES: [(f64, f64); 4] = [(-1.2, 1.2), (0.0, 0.0), (1.2, -1.2), (0.0, 0.0)];
 
 /// One leg: its foot shifted by `dx` and lifted by `lift`, or its paw raised
 /// to `paw`.
@@ -47,6 +57,9 @@ pub(super) struct Stance {
     pub rump: f64,
     pub tail_up: bool,
     pub mouth_open: bool,
+    /// The whole animal tipped this steeply about `BOW_PIVOT` (front down),
+    /// its paws kept on the ground.
+    pub slope: f64,
 }
 
 impl Stance {
@@ -130,6 +143,55 @@ impl Stance {
             closed: true,
             rump: if phase == 0 { 1.0 } else { 2.0 },
             tail_up: true,
+            ..Self::default()
+        }
+    }
+
+    /// Rump up, chest down, front paws reaching ahead, tail up.
+    pub fn bowing(phase: u8) -> Self {
+        let full = phase > 0;
+        let (slope, reach) = BOWS[usize::from(full)];
+        let mut legs = [Leg::default(); 4];
+        for leg in &mut legs[2..] {
+            leg.dx = reach;
+        }
+        Self {
+            closed: full,
+            legs,
+            head: (0.8, 0.0),
+            tilt: 0.15,
+            tail_up: true,
+            slope,
+            ..Self::default()
+        }
+    }
+
+    /// The back arched high, paws drawn in under it, head low.
+    pub fn arching(phase: u8) -> Self {
+        let full = phase > 0;
+        let mut legs = [Leg::default(); 4];
+        for (i, leg) in legs.iter_mut().enumerate() {
+            leg.dx = if i < 2 { 0.6 } else { -0.6 };
+        }
+        Self {
+            closed: full,
+            legs,
+            head: (0.0, if full { 1.2 } else { 0.4 }),
+            tilt: 0.15,
+            hunch: ARCHES[usize::from(full)],
+            ..Self::default()
+        }
+    }
+
+    /// Standing, the front paws raking forward and back in turn; drawn
+    /// turned up against the wall like `Pose::Cling`.
+    pub fn scratching(phase: u8) -> Self {
+        let (far, near) = SCRATCH_STRIDES[usize::from(phase) % SCRATCH_STRIDES.len()];
+        let mut legs = [Leg::default(); 4];
+        legs[2].dx = far;
+        legs[3].dx = near;
+        Self {
+            legs,
             ..Self::default()
         }
     }
