@@ -1,5 +1,5 @@
 //! Now and then the cat coughs up a hairball, which stays on the floor until
-//! the user wipes it away. Dédé the pig poops instead, then turns around and
+//! the user wipes it away, or for 10 seconds at most. Dédé the pig poops instead, then turns around and
 //! eats it, unless the user wipes it first.
 
 use crate::sprites::{Bubble, Facing, MOUTH, Pose, Prop, SCALE, SPIT};
@@ -23,6 +23,8 @@ const DIRT_LEVELS: f64 = 3.0;
 /// The spot glints this long once wiped clean.
 pub const SPARKLE_SECONDS: f64 = 0.8;
 const SPARKLE_FPS: f64 = 6.0;
+/// The hairball goes away on its own after lying on the floor this long.
+pub const LINGER_SECONDS: f64 = 10.0;
 /// Dédé admires his poop this long, then eats it in this long.
 pub const SNIFF_SECONDS: f64 = 1.2;
 pub const GOBBLE_SECONDS: f64 = 4.0;
@@ -37,6 +39,8 @@ pub(super) struct Hairball {
     wiped: f64,
     /// Seconds since it was wiped clean, while the spot glints.
     clean_for: Option<f64>,
+    /// Seconds since it landed.
+    on_floor: f64,
     /// Dédé's poop rather than a hairball.
     poop: bool,
 }
@@ -77,6 +81,7 @@ impl Cat {
             facing: self.facing,
             wiped: 0.0,
             clean_for: None,
+            on_floor: 0.0,
             poop: false,
         });
         self.activity = Activity::Idle;
@@ -99,6 +104,7 @@ impl Cat {
             facing: behind,
             wiped: 0.0,
             clean_for: None,
+            on_floor: 0.0,
             poop: true,
         });
         self.facing = behind;
@@ -162,12 +168,17 @@ impl Cat {
         pose(heaves as u64 as u8 % 2)
     }
 
-    /// The spot glints for a moment once wiped clean, then is gone.
+    /// The spot glints for a moment once wiped clean, then is gone; left
+    /// alone, the hairball is gone after `LINGER_SECONDS`.
     pub(super) fn age_hairball(&mut self, dt: f64) {
         let Some(hairball) = &mut self.hairball else {
             return;
         };
+        hairball.on_floor += dt;
         let Some(clean_for) = &mut hairball.clean_for else {
+            if hairball.on_floor >= LINGER_SECONDS {
+                self.hairball = None;
+            }
             return;
         };
         *clean_for += dt;

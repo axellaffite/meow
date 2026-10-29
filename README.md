@@ -69,7 +69,7 @@ Meow isn't only useful, it's good company.
 - **Feed it** a bowl of kibble, or **let a mouse in** for it to chase, from its
   menu (right-click the cat).
 - **Clean up after it**: now and then it coughs up a hairball that stays on the
-  floor until you scrub it away.
+  floor until you scrub it away, or for 10 seconds.
 - **Dress it like yours**: pick a coat (Ginger, Willow, Alfie, a corgi, or
   Dédé, who is a pig and has his own habits), or show Meow a photo of your own
   cat and it takes on its colors.

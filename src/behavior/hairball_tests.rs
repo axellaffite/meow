@@ -1,6 +1,6 @@
 use super::hairball::{
-    GOBBLE_SECONDS, HACK_SECONDS, SNIFF_SECONDS, SPARKLE_SECONDS, SPIT_SECONDS, WIPE_DISTANCE,
-    WIPE_PER_TAP,
+    GOBBLE_SECONDS, HACK_SECONDS, LINGER_SECONDS, SNIFF_SECONDS, SPARKLE_SECONDS, SPIT_SECONDS,
+    WIPE_DISTANCE, WIPE_PER_TAP,
 };
 use super::*;
 use crate::sprites::{Bubble, Prop, SPIT};
@@ -65,7 +65,7 @@ fn coughing_cat_heaves_then_spits() {
 }
 
 #[test]
-fn hairball_lands_in_front_of_the_cat_and_stays() {
+fn hairball_lands_in_front_of_the_cat_and_stays_a_while() {
     let cat = cat_with_hairball(400.0);
     assert_eq!(cat.activity(), Activity::Idle);
     let view = cat.hairball().unwrap();
@@ -74,8 +74,18 @@ fn hairball_lands_in_front_of_the_cat_and_stays() {
 
     let mut walked_off = cat_with_hairball(400.0);
     walked_off.time_left = 0.0;
-    run(&mut walked_off, 30.0);
+    run(&mut walked_off, LINGER_SECONDS - 1.0);
     assert_eq!(walked_off.hairball(), Some(view), "left where it was");
+}
+
+#[test]
+fn hairball_left_alone_goes_away_after_ten_seconds() {
+    let mut cat = cat_with_hairball(400.0);
+    run(&mut cat, LINGER_SECONDS - 0.5);
+    assert!(cat.hairball().is_some());
+    run(&mut cat, 0.5);
+    assert_eq!(cat.hairball(), None);
+    assert!(cat.cough_up(), "room for another");
 }
 
 #[test]

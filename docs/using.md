@@ -46,8 +46,9 @@ Everything the cat and its bubble respond to. For an overview, see the
   `~/Library/Application Support/Meow/settings.json`. The bubble's size and
   the style (Pixel Art or Classic, which relaunches Meow) are there too.
 - **Now and then the cat coughs up a hairball** (or on demand: **Hairball** in
-  its menu). It stays on the floor until you clean it: scrub it with the mouse
-  button down, or click it a few times, until it sparkles and is gone.
+  its menu). It stays on the floor until you clean it (scrub it with the mouse
+  button down, or click it a few times, until it sparkles and is gone), or
+  for 10 seconds at most.
 - **Dédé the pig poops instead** (the item is called **Poop** then): he
   squats, drops it behind him, turns around to admire it, hearts floating up,
   and eats it. Wipe it before he does and he goes off disappointed.
