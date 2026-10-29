@@ -47,6 +47,8 @@ pub(crate) struct FakeHost {
     pub(crate) worn: Vec<Coat>,
     /// Each size the chat bubble was given.
     pub(crate) sizes: Vec<(f64, f64)>,
+    /// Each time the news bubble over the cat was turned on or off.
+    pub(crate) news_shown: Vec<bool>,
     pub(crate) settings_changes: usize,
     /// Conversations flagged with `!` over the cat.
     pub(crate) unread: Vec<ChatId>,
@@ -175,6 +177,10 @@ impl Host for FakeHost {
 
     fn resize_chat(&mut self, size: (f64, f64)) {
         self.sizes.push(size);
+    }
+
+    fn show_news(&mut self, shown: bool) {
+        self.news_shown.push(shown);
     }
 
     fn settings_changed(&mut self) {

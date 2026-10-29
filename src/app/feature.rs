@@ -195,6 +195,9 @@ pub(crate) trait Host {
     fn wear(&mut self, coat: Coat);
     /// The chat bubble's size, in points; it is fitted to the screen.
     fn resize_chat(&mut self, size: (f64, f64));
+    /// Whether unread news shows where it comes from in a bubble over the
+    /// cat (the default), or only the cat's `!`.
+    fn show_news(&mut self, shown: bool);
     /// The feature's settings changed: the Settings page asks for them again.
     fn settings_changed(&mut self);
     /// The count shown at the end of `page`'s row in the sidebar.
@@ -334,6 +337,10 @@ impl Host for AppHost<'_> {
 
     fn resize_chat(&mut self, size: (f64, f64)) {
         self.app.chat.set_size(size);
+    }
+
+    fn show_news(&mut self, shown: bool) {
+        self.app.activity.news_shown = shown;
     }
 
     fn settings_changed(&mut self) {

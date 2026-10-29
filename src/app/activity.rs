@@ -18,6 +18,8 @@ pub(super) struct ActivityState {
     pub(super) log: ActivityLog,
     /// Where the log is saved; `None` when the file could not be read.
     path: Option<std::path::PathBuf>,
+    /// Whether unread news shows its icons over the cat, or just its `!`.
+    pub(super) news_shown: bool,
 }
 
 impl ActivityState {
@@ -33,6 +35,7 @@ impl ActivityState {
                     Self {
                         log,
                         path: Some(path),
+                        news_shown: true,
                     },
                     None,
                 )
@@ -48,6 +51,7 @@ impl ActivityState {
         Self {
             log: ActivityLog::default(),
             path,
+            news_shown: true,
         }
     }
 }
@@ -136,7 +140,8 @@ impl App {
 
     /// Where `look` would show its `!` and news is unread, shows the news's
     /// icons in a bubble above the cat (drawn at `origin` on `screen`)
-    /// instead; returns the look to draw the cat with.
+    /// instead, unless that bubble is turned off; returns the look to draw
+    /// the cat with.
     pub(super) fn show_news(&mut self, look: Look, origin: NSPoint, screen: NSRect) -> Look {
         let sources: Vec<_> = self
             .activity
@@ -146,7 +151,7 @@ impl App {
             .filter(|item| !item.read)
             .flat_map(|item| item.sources())
             .collect();
-        if look.bubble != Bubble::Bang || sources.is_empty() {
+        if !self.activity.news_shown || look.bubble != Bubble::Bang || sources.is_empty() {
             self.news_bubble.hide();
             self.last_news = None;
             return look;
