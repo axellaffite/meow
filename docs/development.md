@@ -52,7 +52,12 @@ cargo test                                  # behaviour, sprites, CLI stream par
 cargo run --example preview -- sprites.png  # render every pose to a PNG sheet
 cargo run --example activity_preview -- activity.png  # the Activity page with sample news
 cargo run --example news_bubble_preview -- bubble.png  # the cat's news bubble
+cargo run --example model_preview -- model.png  # a 3D model rendered offscreen
+cargo run --example model_window                # a 3D model in a window on the desktop
 ```
+
+The 3D engine (`creature`, `motion`, `render`), and how to bring a model to
+it, is described in [A 3D creature](3d.md).
 
 To check the look of every page without screen access, run with
 `MEOW_SNAPSHOT_DIR=<folder>`: Meow opens the bubble, saves each page (Chat,
