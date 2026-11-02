@@ -180,8 +180,8 @@ impl Feature for BackgroundCheck {
     }
 }
 
-/// One Activity item for the tasks a check added, one for those it closed,
-/// each with the sources they come from.
+/// One Activity item for the tasks a check added, with a banner, and one,
+/// quiet, for those it closed, each with the sources they come from.
 fn announce(host: &mut dyn Host, added: &[(&str, Source)], closed: &[(String, Source)]) {
     let count = |n: usize, what: &str| match n {
         1 => format!("1 {what}"),
@@ -200,7 +200,7 @@ fn announce(host: &mut dyn Host, added: &[(&str, Source)], closed: &[(String, So
     }
     if !closed.is_empty() {
         let titles: Vec<&str> = closed.iter().map(|(title, _)| title.as_str()).collect();
-        host.record(Note {
+        host.record_quietly(Note {
             kind: Kind::Tasks,
             title: format!("{} resolved at the source", count(closed.len(), "task")),
             detail: Some(activity::list_titles(&titles, 3)),

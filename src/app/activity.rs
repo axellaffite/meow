@@ -2,7 +2,7 @@
 //! log and macOS banners, and the cat shows where unread ones come from.
 //! Opening the page marks them read; each can be dismissed, or all cleared.
 
-use meow::activity::{self, ActivityLog, Kind, Link, Note};
+use meow::activity::{self, ActivityLog, Banners, Kind, Link, Note};
 use meow::conversations::ChatId;
 use meow::source::{self, Icons};
 use meow::sprites::{Bubble, Facing, Look};
@@ -20,6 +20,8 @@ pub(super) struct ActivityState {
     path: Option<std::path::PathBuf>,
     /// Whether unread news shows its icons over the cat, or just its `!`.
     pub(super) news_shown: bool,
+    /// Which news shows a macOS banner too.
+    pub(super) banners: Banners,
 }
 
 impl ActivityState {
@@ -36,6 +38,7 @@ impl ActivityState {
                         log,
                         path: Some(path),
                         news_shown: true,
+                        banners: Banners::default(),
                     },
                     None,
                 )
@@ -52,14 +55,22 @@ impl ActivityState {
             log: ActivityLog::default(),
             path,
             news_shown: true,
+            banners: Banners::default(),
         }
     }
 }
 
 impl App {
     /// Records something that happened, with a banner unless the Activity
-    /// page is on screen (then it is read at once).
+    /// page is on screen (then it is read at once) or banners of its kind are
+    /// turned off.
     pub(super) fn notify(&mut self, note: Note) {
+        self.log_activity(note, true);
+    }
+
+    /// Records something that happened; a banner only when `banner` is true
+    /// and the user's banner settings allow its kind.
+    pub(super) fn log_activity(&mut self, note: Note, banner: bool) {
         let now = now_secs();
         self.activity.log.prune(now);
         let Some(item) = self.activity.log.push(note, now) else {
@@ -70,9 +81,10 @@ impl App {
             .clone()
             .unwrap_or_else(|| kind_name(item.kind).to_string());
         let title = item.title.clone();
+        let kind = item.kind;
         if self.activity_visible() {
             self.activity.log.mark_all_read();
-        } else {
+        } else if banner && self.activity.banners.allows(kind) {
             notify::post(&title, &body);
         }
         self.activity_changed();

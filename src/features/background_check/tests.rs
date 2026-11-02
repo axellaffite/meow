@@ -63,9 +63,12 @@ fn a_check_closes_resolved_tasks_adds_new_ones_and_says_so_in_activity() {
     assert_eq!(open, ["Answer Ana"]);
     assert_eq!(host.tasks_changes, 1);
     let titles: Vec<_> = host.notes.iter().map(|n| n.title.as_str()).collect();
+    assert_eq!(titles, ["1 new task waiting on you"]);
+    let quiet: Vec<_> = host.quiet_notes.iter().map(|n| n.title.as_str()).collect();
     assert_eq!(
-        titles,
-        ["1 new task waiting on you", "1 task resolved at the source"]
+        quiet,
+        ["1 task resolved at the source"],
+        "no banner for good news"
     );
     let status = host.tasks_status.last().cloned().flatten().unwrap();
     assert!(status.starts_with("checked at "), "{status}");

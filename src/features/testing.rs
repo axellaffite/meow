@@ -4,7 +4,7 @@
 
 use meow::action_results::ActionResults;
 use meow::actions::QuickAction;
-use meow::activity::{Activity, Note};
+use meow::activity::{Activity, Banners, Note};
 use meow::agent::Proposal;
 use meow::claude::ClaudeEnv;
 use meow::conversations::ChatId;
@@ -27,6 +27,11 @@ pub(crate) struct FakeHost {
     pub(crate) errors: Vec<(ChatId, String)>,
     pub(crate) banners: Vec<String>,
     pub(crate) notes: Vec<Note>,
+    /// Notes recorded for Activity only, with no banner.
+    pub(crate) quiet_notes: Vec<Note>,
+    /// Each banner setting the app was given.
+    #[expect(dead_code, reason = "Settings › Notifications reads it, in its own PR")]
+    pub(crate) banner_settings: Vec<Banners>,
     pub(crate) badges: Vec<(&'static str, usize)>,
     /// `None` (the default): Claude is not ready, and nothing ever runs.
     pub(crate) claude_env: Option<ClaudeEnv>,
@@ -120,6 +125,14 @@ impl Host for FakeHost {
 
     fn record(&mut self, note: Note) {
         self.notes.push(note);
+    }
+
+    fn record_quietly(&mut self, note: Note) {
+        self.quiet_notes.push(note);
+    }
+
+    fn set_banners(&mut self, banners: Banners) {
+        self.banner_settings.push(banners);
     }
 
     fn claude(&self) -> Option<&ClaudeEnv> {
