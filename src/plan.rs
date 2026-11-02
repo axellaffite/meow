@@ -5,7 +5,9 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::clock;
-use crate::tasks::{FoundTask, SLACK_NO_REPLY_RULE, take_fence};
+use crate::tasks::{
+    FoundTask, NOT_MY_TASK_RULE, ONE_TASK_PER_REQUEST_RULE, SLACK_NO_REPLY_RULE, take_fence,
+};
 
 pub const PLAN_FENCE: &str = "meow-plan";
 const MAX_EVENTS: usize = 20;
@@ -358,7 +360,7 @@ pub fn instruction(now: u64) -> String {
          \"replies\": messages waiting for my answer, same shape without \"why\",\n \
          \"later\": anything else I need to act on, same shape}}.\n\
          Do not repeat an item in two lists, and use empty lists when there is nothing. \
-         {SLACK_NO_REPLY_RULE}",
+         {SLACK_NO_REPLY_RULE} {NOT_MY_TASK_RULE} {ONE_TASK_PER_REQUEST_RULE}",
         clock::describe(now)
     )
 }

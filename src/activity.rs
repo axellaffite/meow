@@ -26,6 +26,15 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// Every kind, in the order Settings lists them.
+    pub const ALL: [Kind; 5] = [
+        Self::Slack,
+        Self::Calendar,
+        Self::Tasks,
+        Self::Scheduled,
+        Self::Autopilot,
+    ];
+
     /// "SLACK", for the item's tag.
     pub fn label(self) -> &'static str {
         match self {
@@ -102,6 +111,33 @@ impl Activity {
         } else {
             self.sources.clone()
         }
+    }
+}
+
+/// Which news also shows as a macOS banner. Every item still goes to the
+/// Activity page; this only decides what interrupts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Banners {
+    /// No banner at all when off.
+    pub on: bool,
+    /// Kinds of news that never show a banner.
+    pub muted: Vec<Kind>,
+}
+
+impl Default for Banners {
+    fn default() -> Self {
+        Self {
+            on: true,
+            muted: Vec::new(),
+        }
+    }
+}
+
+impl Banners {
+    /// Whether news of `kind` shows a banner.
+    pub fn allows(&self, kind: Kind) -> bool {
+        self.on && !self.muted.contains(&kind)
     }
 }
 

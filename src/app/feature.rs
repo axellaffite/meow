@@ -4,7 +4,7 @@
 //! and one line in `features::all`, never a field on `App` or a `UiEvent`.
 
 use meow::actions::QuickAction;
-use meow::activity::{Activity, Link, Note};
+use meow::activity::{Activity, Banners, Link, Note};
 use meow::agent::Proposal;
 use meow::claude::ClaudeEnv;
 use meow::conversations::ChatId;
@@ -133,10 +133,16 @@ pub(crate) trait Host {
     fn flag_unread(&mut self, chat: &ChatId);
     /// Shows `!` over the cat until the bubble is opened.
     fn alert(&mut self);
-    /// A macOS banner.
+    /// A macOS banner, unless the user turned banners off.
     fn notify(&mut self, text: &str);
-    /// Something that happened, for the Activity page (with a banner).
+    /// Something that happened, for the Activity page (with a banner, if
+    /// the user's banner settings allow its kind).
     fn record(&mut self, note: Note);
+    /// Something that happened, for the Activity page only: news that needs
+    /// no attention, never a banner.
+    fn record_quietly(&mut self, note: Note);
+    /// Which news shows a macOS banner too (all of it until a feature says).
+    fn set_banners(&mut self, banners: Banners);
     /// Marks the Activity items `about` matches as read.
     fn read_activity(&mut self, about: &dyn Fn(&Activity) -> bool);
     /// Opens the chat bubble on `page`.
@@ -233,7 +239,9 @@ impl Host for AppHost<'_> {
     }
 
     fn notify(&mut self, text: &str) {
-        notify::post("Meow", text);
+        if self.app.activity.banners.on {
+            notify::post("Meow", text);
+        }
     }
 
     fn read_activity(&mut self, about: &dyn Fn(&Activity) -> bool) {
@@ -349,6 +357,14 @@ impl Host for AppHost<'_> {
 
     fn record(&mut self, note: Note) {
         self.app.notify(note);
+    }
+
+    fn record_quietly(&mut self, note: Note) {
+        self.app.log_activity(note, false);
+    }
+
+    fn set_banners(&mut self, banners: Banners) {
+        self.app.activity.banners = banners;
     }
 
     /// None while taking snapshots: they show pages, and never run Claude to

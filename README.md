@@ -110,6 +110,7 @@ Each feature has its own page with the details:
 [Background check](docs/features/background-check.md),
 [Coding agents](docs/features/coding-agents.md),
 [Meow's data in the chat](docs/features/meow-data.md),
+[Notifications](docs/features/notifications.md),
 [Quick actions](docs/features/quick-actions.md),
 [Scheduled tasks](docs/features/scheduled-tasks.md),
 [Slack](docs/features/slack.md),

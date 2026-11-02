@@ -27,8 +27,9 @@ src/
     testing.rs        what feature tests share: a fake `Host`, menu helpers
     appearance/       mod.rs, tests.rs
     agenda/           mod.rs, tests.rs
-    background_check/ mod.rs, tests.rs
+    background_check/ mod.rs, triage.rs, tests.rs
     daily_actions/    mod.rs, tests.rs
+    notifications/    mod.rs, tests.rs
     routines/         mod.rs (state, messages, `impl Feature`), page.rs, tests.rs
     slack/            mod.rs, one file per part (conversations, assist, voice,
                       emoji, downloads, events, autopilot), snapshot.rs, tests.rs
@@ -140,7 +141,7 @@ exists to retire.
 ## What is a feature, and what is the app
 
 Every part that can stand alone is a feature in `src/features/`: `agenda`,
-`appearance`, `background_check`, `daily_actions`, `routines`, `slack` (with
+`appearance`, `background_check`, `daily_actions`, `notifications`, `routines`, `slack` (with
 Autopilot, which works from Slack messages) and `update`.
 
 The rest is the app itself, shared by everything else; it stays in

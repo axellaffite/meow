@@ -22,6 +22,23 @@ pub const SLACK_NO_REPLY_RULE: &str = "On Slack, a message that only acknowledge
      a decision or a result (\"je te confirme\", \"c'est fait\") with no question and no request \
      to me.";
 
+/// What looks like it waits on me but is not mine to do: the kinds of items
+/// I ticked off without doing anything, most often.
+pub const NOT_MY_TASK_RULE: &str = "Never a task: a message to a whole channel (@channel, \
+     @here, everyone) that does not name me; a reminder, a bot message or logistics (lunch \
+     orders, receipts to upload, time sheets, which room a meeting is in); a message telling me \
+     there is nothing for me to do, or to check whether I am concerned; preparing, joining or \
+     confirming a meeting on my calendar; a question someone else already answered in the \
+     conversation; and unblocking, reviewing, chasing, triaging, assigning or praising the \
+     Linear issues of the people I manage. A Linear issue is mine only when it is assigned to \
+     me, and a pull request only when its review is requested from me by name.";
+/// One request is one task, whichever tool it reached me through.
+pub const ONE_TASK_PER_REQUEST_RULE: &str = "One request is one task: a pull request I review \
+     in GitHub and in Linear, a Linear issue and the Slack messages about it, several messages \
+     of one DM or thread, an email and the Slack message on the same subject. Report it once, \
+     and never when a task in my list is already about it, even under another title, source \
+     or link.";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
@@ -38,11 +55,26 @@ pub struct Task {
     /// Ticked off by the background check rather than by hand.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto_done: bool,
+    /// Kept out of sight until then (Unix time): a message I often answer
+    /// before I look at my tasks, which the background check may still find
+    /// answered. See [`TaskList::hold`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_until: Option<u64>,
 }
 
 impl Task {
     pub fn is_done(&self) -> bool {
         self.done_at.is_some()
+    }
+
+    /// Waiting out its grace period, not shown yet.
+    pub fn is_held(&self) -> bool {
+        self.held_until.is_some() && !self.is_done()
+    }
+
+    /// Shown in the list: not held back.
+    fn is_shown(&self) -> bool {
+        !self.is_held()
     }
 }
 
@@ -80,12 +112,13 @@ pub struct TaskList {
 
 impl TaskList {
     /// Open tasks in the order they arrived, then done ones, most recent first.
+    /// Held tasks are left out until their grace period ends.
     pub fn display(&self) -> Vec<&Task> {
         let mut done: Vec<&Task> = self.tasks.iter().filter(|t| t.is_done()).collect();
         done.sort_by_key(|t| std::cmp::Reverse(t.done_at));
         self.tasks
             .iter()
-            .filter(|t| !t.is_done())
+            .filter(|t| !t.is_done() && t.is_shown())
             .chain(done)
             .collect()
     }
@@ -103,7 +136,7 @@ impl TaskList {
                 });
             }
         }
-        for task in self.tasks.iter().filter(|t| !t.is_done()) {
+        for task in self.tasks.iter().filter(|t| !t.is_done() && t.is_shown()) {
             if let Some(group) = groups.iter_mut().find(|g| g.source == task.source) {
                 group.tasks.push(task);
             }
@@ -117,8 +150,57 @@ impl TaskList {
         self.display().into_iter().filter(|t| t.is_done()).collect()
     }
 
+    /// Open tasks shown, held ones left out.
     pub fn open_count(&self) -> usize {
-        self.tasks.iter().filter(|t| !t.is_done()).count()
+        self.tasks
+            .iter()
+            .filter(|t| !t.is_done() && t.is_shown())
+            .count()
+    }
+
+    /// Open tasks still in their grace period.
+    pub fn held(&self) -> Vec<&Task> {
+        self.tasks.iter().filter(|t| t.is_held()).collect()
+    }
+
+    /// Keeps open task `id` out of sight until `until`; `false` if there is
+    /// no such open task.
+    pub fn hold(&mut self, id: &str, until: u64) -> bool {
+        match self.tasks.iter_mut().find(|t| t.id == id && !t.is_done()) {
+            Some(task) => {
+                task.held_until = Some(until);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Shows the held tasks whose grace period is over, and returns them.
+    pub fn release_held(&mut self, now: u64) -> Vec<Task> {
+        let mut released = Vec::new();
+        for task in &mut self.tasks {
+            if task.is_held() && task.held_until.is_some_and(|until| until <= now) {
+                task.held_until = None;
+                released.push(task.clone());
+            }
+        }
+        released
+    }
+
+    /// An open task listed before `id` that is the same request, see
+    /// [`same_request`].
+    pub fn repeat_of(&self, id: &str) -> Option<&Task> {
+        let index = self.tasks.iter().position(|t| t.id == id)?;
+        let task = &self.tasks[index];
+        self.tasks[..index]
+            .iter()
+            .find(|other| !other.is_done() && same_request(other, task))
+    }
+
+    /// Takes open task `id` off the list as a repeat of another open task,
+    /// so no check reports it again; `false` if there is no such open task.
+    pub fn absorb(&mut self, id: &str, now: u64) -> bool {
+        self.close_resolved(&[id.to_string()], now) == 1
     }
 
     pub fn add_manual(&mut self, title: &str, now: u64) -> bool {
@@ -138,6 +220,7 @@ impl TaskList {
             done_at: None,
             session: None,
             auto_done: false,
+            held_until: None,
         });
         true
     }
@@ -171,6 +254,7 @@ impl TaskList {
                         done_at: None,
                         session: None,
                         auto_done: false,
+                        held_until: None,
                     });
                     added += 1;
                 }
@@ -183,6 +267,7 @@ impl TaskList {
         if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
             task.done_at = done.then_some(now);
             task.auto_done = false;
+            task.held_until = None;
         }
     }
 
@@ -272,6 +357,142 @@ impl TaskList {
         std::fs::write(&temp, json).map_err(|e| fail(&e))?;
         std::fs::rename(&temp, path).map_err(|e| fail(&e))
     }
+}
+
+/// What a task is about beyond its own link, so one request found twice
+/// (a pull request in GitHub and in Linear, a Linear issue a Slack message
+/// asks about, two messages of the same DM) is one task: the Linear issues
+/// (`ENG-60`) and pull requests (`infra#707`) it names, and the Slack
+/// conversation it answers (a DM, or a channel thread).
+pub fn request_keys(task: &Task) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut add = |key: String| {
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    };
+    let text = format!("{} {}", task.title, task.url.as_deref().unwrap_or(""));
+    for word in text.split(|c: char| !(c.is_ascii_alphanumeric() || "-_#".contains(c))) {
+        if let Some(issue) = issue_key(word) {
+            add(issue);
+        } else if let Some(pull) = pull_key(word) {
+            add(pull);
+        }
+    }
+    if let Some(url) = task.url.as_deref() {
+        if let Some(pull) = github_pull(url) {
+            add(pull);
+        }
+        if let Some(conversation) = slack_conversation(url) {
+            add(conversation);
+        }
+    }
+    keys
+}
+
+/// `ENG-60`: two to six capitals, a dash, a number.
+fn issue_key(word: &str) -> Option<String> {
+    let (team, number) = word.split_once('-')?;
+    let team_ok = (2..=6).contains(&team.len()) && team.chars().all(|c| c.is_ascii_uppercase());
+    let number_ok = !number.is_empty() && number.chars().all(|c| c.is_ascii_digit());
+    (team_ok && number_ok).then(|| format!("issue:{word}"))
+}
+
+/// `infra#707`, as a title writes a pull request.
+fn pull_key(word: &str) -> Option<String> {
+    let (repo, number) = word.split_once('#')?;
+    let repo_ok = !repo.is_empty()
+        && repo
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let number_ok = !number.is_empty() && number.chars().all(|c| c.is_ascii_digit());
+    (repo_ok && number_ok).then(|| format!("pull:{}#{number}", repo.to_lowercase()))
+}
+
+/// `github.com/org/infra/pull/707…` → `pull:infra#707`.
+fn github_pull(url: &str) -> Option<String> {
+    let rest = url.split("github.com/").nth(1)?;
+    let mut parts = rest.split(['/', '?', '#']);
+    let (_org, repo, kind, number) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+    let number_ok = !number.is_empty() && number.chars().all(|c| c.is_ascii_digit());
+    (kind == "pull" && number_ok).then(|| format!("pull:{}#{number}", repo.to_lowercase()))
+}
+
+/// A Slack link's conversation: the DM itself, as one answer covers what a
+/// person asked in a row, or the channel thread.
+fn slack_conversation(url: &str) -> Option<String> {
+    let rest = url.split("slack.com/archives/").nth(1)?;
+    let (channel, rest) = rest.split_once('/').unwrap_or((rest, ""));
+    if channel.starts_with('D') {
+        return Some(format!("slack:{channel}"));
+    }
+    let thread = rest
+        .split(['?', '&'])
+        .find_map(|part| part.strip_prefix("thread_ts="))
+        .map(str::to_string)
+        .or_else(|| slack_ts(rest))?;
+    Some(format!("slack:{channel}:{thread}"))
+}
+
+/// `p1700000000000100` → `1700000000.000100`.
+fn slack_ts(path: &str) -> Option<String> {
+    let digits = path.strip_prefix('p')?.split(['?', '#', '/']).next()?;
+    (digits.len() > 6 && digits.chars().all(|c| c.is_ascii_digit())).then(|| {
+        format!(
+            "{}.{}",
+            &digits[..digits.len() - 6],
+            &digits[digits.len() - 6..]
+        )
+    })
+}
+
+/// When the Slack message a task links to was posted (Unix time), from its link.
+pub fn message_time(task: &Task) -> Option<u64> {
+    let rest = task.url.as_deref()?.split("slack.com/archives/").nth(1)?;
+    let ts = slack_ts(rest.split_once('/')?.1)?;
+    ts.split('.').next()?.parse().ok()
+}
+
+/// The words of a Linear review link (`linear.app/x/review/fix-cache-edge-routing-0a1b2c3d4e5f`)
+/// worth comparing with a pull request's title.
+fn review_words(url: &str) -> Vec<String> {
+    let Some(slug) = url
+        .split("linear.app/")
+        .nth(1)
+        .and_then(|rest| rest.split('/').skip_while(|part| *part != "review").nth(1))
+    else {
+        return Vec::new();
+    };
+    let mut words: Vec<&str> = slug.split(['-', '?', '#']).collect();
+    if words
+        .last()
+        .is_some_and(|w| w.len() >= 8 && w.chars().all(|c| c.is_ascii_hexdigit()))
+    {
+        words.pop();
+    }
+    words
+        .into_iter()
+        .filter(|w| w.len() >= 4 && !["review", "fixauto", "feat", "chore"].contains(w))
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// A Linear review of a pull request and that pull request's task: most of
+/// the review link's words are in the other title.
+fn same_review(review: &Task, pull: &Task) -> bool {
+    let words = review_words(review.url.as_deref().unwrap_or(""));
+    if words.len() < 2 || !request_keys(pull).iter().any(|k| k.starts_with("pull:")) {
+        return false;
+    }
+    let title = pull.title.to_lowercase();
+    let shared = words.iter().filter(|w| title.contains(w.as_str())).count();
+    shared >= 2 && shared * 3 >= words.len() * 2
+}
+
+/// Whether two tasks are the same request, found twice.
+pub fn same_request(a: &Task, b: &Task) -> bool {
+    let keys = request_keys(a);
+    request_keys(b).iter().any(|k| keys.contains(k)) || same_review(a, b) || same_review(b, a)
 }
 
 /// `~/Library/Application Support/Meow/tasks.json`.
@@ -431,7 +652,8 @@ pub fn report_instruction() -> String {
         "At the very end of your answer, add a fenced code block with the info string \
          `{TASKS_FENCE}` holding a JSON array of the things I need to act on (not meetings or \
          FYIs), one object each: {{\"title\": short imperative title, \"source\": where it comes \
-         from (Linear, GitHub, Slack, Gmail…), \"url\": its link or null}}. {SLACK_NO_REPLY_RULE}"
+         from (Linear, GitHub, Slack, Gmail…), \"url\": its link or null}}. {SLACK_NO_REPLY_RULE} \
+         {NOT_MY_TASK_RULE} {ONE_TASK_PER_REQUEST_RULE}"
     )
 }
 
@@ -467,12 +689,12 @@ mod tests {
 
     #[test]
     fn extract_strips_the_block_and_parses_tasks() {
-        let answer = "## Pending\n- ACC-52\n\n```meow-tasks\n[{\"title\":\"Fix ACC-52\",\"source\":\"Linear\",\"url\":\"https://l/52\"}]\n```\n";
+        let answer = "## Pending\n- ENG-52\n\n```meow-tasks\n[{\"title\":\"Fix ENG-52\",\"source\":\"Linear\",\"url\":\"https://l/52\"}]\n```\n";
         let (shown, tasks) = extract(answer);
-        assert_eq!(shown, "## Pending\n- ACC-52");
+        assert_eq!(shown, "## Pending\n- ENG-52");
         assert_eq!(
             tasks,
-            vec![found("Fix ACC-52", "Linear", Some("https://l/52"))]
+            vec![found("Fix ENG-52", "Linear", Some("https://l/52"))]
         );
     }
 
@@ -663,9 +885,9 @@ mod tests {
     #[test]
     fn chat_prompt_gives_the_task_then_the_message() {
         let mut list = TaskList::default();
-        list.merge(&[found("Fix ACC-52", "Linear", Some("https://l/52"))], 1);
+        list.merge(&[found("Fix ENG-52", "Linear", Some("https://l/52"))], 1);
         let prompt = chat_prompt(list.display()[0], "What's blocking it?");
-        assert!(prompt.contains("Task: Fix ACC-52"));
+        assert!(prompt.contains("Task: Fix ENG-52"));
         assert!(prompt.contains("Source: Linear"));
         assert!(prompt.contains("Link: https://l/52"));
         assert!(prompt.ends_with("What's blocking it?"));
@@ -808,5 +1030,169 @@ mod tests {
         std::fs::write(&path, "{oops").unwrap();
         assert!(TaskList::load(&path).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn task(title: &str, source: &str, url: Option<&str>) -> Task {
+        let mut list = TaskList::default();
+        list.merge(&[found(title, source, url)], 1);
+        list.tasks.remove(0)
+    }
+
+    #[test]
+    fn the_same_issue_or_pull_request_is_one_request_across_sources() {
+        let github = task(
+            "Relire la PR infra#707 de Bo",
+            "GitHub",
+            Some("https://github.com/acme/infra/pull/707"),
+        );
+        let linear = task("Review cache PR infra#707", "Linear", None);
+        assert!(same_request(&github, &linear));
+        let other = task("Relire la PR infra#708", "GitHub", None);
+        assert!(!same_request(&github, &other));
+
+        let issue = task("Lancer la mesure ENG-60 ou décaler", "Linear", None);
+        let again = task("Finir ENG-60 (mesure release 1003)", "Linear", None);
+        let slack = task(
+            "Répondre à Cy sur ENG-60",
+            "Slack",
+            Some("https://x.slack.com/archives/C1/p1700000000000100"),
+        );
+        assert!(same_request(&issue, &again));
+        assert!(same_request(&issue, &slack));
+        assert!(!same_request(&issue, &task("Finir ENG-61", "Linear", None)));
+    }
+
+    #[test]
+    fn messages_of_one_dm_or_thread_are_one_request() {
+        let first = task(
+            "Répondre à Ana sur le chiffrage",
+            "Slack",
+            Some("https://x.slack.com/archives/D01/p1700000000000100"),
+        );
+        let second = task(
+            "Répondre à Ana : 5 min sur les cards",
+            "Slack",
+            Some("https://x.slack.com/archives/D01/p1700000900000000"),
+        );
+        assert!(same_request(&first, &second));
+
+        let top = task(
+            "Answer Bo",
+            "Slack",
+            Some("https://x.slack.com/archives/C9/p1700000000000100"),
+        );
+        let reply = task(
+            "Answer Bo again",
+            "Slack",
+            Some("https://x.slack.com/archives/C9/p1700001000000000?thread_ts=1700000000.000100"),
+        );
+        let elsewhere = task(
+            "Answer Cy",
+            "Slack",
+            Some("https://x.slack.com/archives/C9/p1700002000000000"),
+        );
+        assert!(same_request(&top, &reply));
+        assert!(
+            !same_request(&top, &elsewhere),
+            "another thread of the channel"
+        );
+    }
+
+    #[test]
+    fn a_linear_review_and_its_github_pull_request_are_one_request() {
+        let linear = task(
+            "Relire la PR cache « routing split » de Bo",
+            "Linear",
+            Some(
+                "https://linear.app/acme/review/fixauto-review-document-cache-edge-routing-split-0a1b2c3d4e5f",
+            ),
+        );
+        let github = task(
+            "Relire la PR infra#726 de Bo (document cache edge routing split)",
+            "GitHub",
+            Some("https://github.com/acme/infra/pull/726"),
+        );
+        let unrelated = task(
+            "Relire la PR infra#723 de Bo (document shared module cost labels)",
+            "GitHub",
+            Some("https://github.com/acme/infra/pull/723"),
+        );
+        assert!(same_request(&linear, &github));
+        assert!(!same_request(&linear, &unrelated));
+    }
+
+    #[test]
+    fn slack_links_give_when_the_message_was_posted() {
+        let message = task(
+            "Answer",
+            "Slack",
+            Some("https://x.slack.com/archives/D01/p1700000000000100?thread_ts=1.2"),
+        );
+        assert_eq!(message_time(&message), Some(1_700_000_000));
+        assert_eq!(
+            message_time(&task("Answer", "Gmail", Some("https://mail.google.com/x"))),
+            None
+        );
+    }
+
+    #[test]
+    fn held_tasks_are_out_of_sight_but_still_checked() {
+        let mut list = TaskList::default();
+        list.merge(
+            &[
+                found("Answer Ana", "Slack", Some("https://s/1")),
+                found("Fix ENG-1", "Linear", None),
+            ],
+            1,
+        );
+        let id = list.open()[0].id.clone();
+        assert!(list.hold(&id, 100));
+        assert_eq!(titles(&list), ["Fix ENG-1"]);
+        assert_eq!(list.open_count(), 1);
+        assert_eq!(list.groups().len(), 1);
+        assert_eq!(list.open().len(), 2, "the check still sees it");
+        assert!(list.release_held(99).is_empty());
+        assert_eq!(list.release_held(100)[0].title, "Answer Ana");
+        assert_eq!(titles(&list), ["Answer Ana", "Fix ENG-1"]);
+    }
+
+    #[test]
+    fn a_repeat_is_found_among_earlier_open_tasks_and_absorbed() {
+        let mut list = TaskList::default();
+        list.merge(
+            &[
+                found("Finir ENG-60", "Linear", None),
+                found("Mesurer ENG-60", "Linear", None),
+            ],
+            1,
+        );
+        let second = list.open()[1].id.clone();
+        assert_eq!(list.repeat_of(&second).unwrap().title, "Finir ENG-60");
+        assert!(list.absorb(&second, 2));
+        assert_eq!(titles(&list), ["Finir ENG-60"]);
+        assert!(list.get(&second).unwrap().is_done(), "never reported again");
+        let first = list.open()[0].id.clone();
+        assert!(list.repeat_of(&first).is_none());
+    }
+
+    /// Replays the saved task list: which tasks would have been merged.
+    /// `cargo test --lib replay_saved_tasks -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn replay_saved_tasks() {
+        let list = TaskList::load(&default_path().unwrap()).unwrap();
+        let mut all: Vec<&Task> = list.tasks.iter().chain(&list.dismissed).collect();
+        all.sort_by_key(|t| t.created_at);
+        let mut merged = 0;
+        for (index, task) in all.iter().enumerate() {
+            let open_then = all[..index].iter().find(|other| {
+                other.done_at.is_none_or(|done| done > task.created_at) && same_request(other, task)
+            });
+            if let Some(other) = open_then {
+                merged += 1;
+                println!("{}\n   = {}", task.title, other.title);
+            }
+        }
+        println!("{merged} of {} merged", all.len());
     }
 }
