@@ -6,6 +6,7 @@ mod agenda;
 mod appearance;
 mod background_check;
 mod daily_actions;
+mod notifications;
 mod routines;
 mod slack;
 #[cfg(test)]
@@ -25,8 +26,9 @@ pub(crate) fn all(settings: &mut Store) -> Vec<Box<dyn Feature>> {
     vec![
         Box::new(agenda::AgendaRefresh::from_env()),
         Box::new(appearance::Theme::from_settings(settings.get())),
-        Box::new(background_check::BackgroundCheck::from_env()),
+        Box::new(background_check::BackgroundCheck::from_settings(settings.get())),
         Box::new(daily_actions::DailyActions::new()),
+        Box::new(notifications::Notifications::from_settings(settings.get())),
         Box::new(routines::ScheduledTasks::from_env()),
         Box::new(slack::Slack::from_settings(settings.get())),
         Box::new(update::Update::from_env()),

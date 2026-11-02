@@ -30,7 +30,6 @@ pub(crate) struct FakeHost {
     /// Notes recorded for Activity only, with no banner.
     pub(crate) quiet_notes: Vec<Note>,
     /// Each banner setting the app was given.
-    #[expect(dead_code, reason = "Settings › Notifications reads it, in its own PR")]
     pub(crate) banner_settings: Vec<Banners>,
     pub(crate) badges: Vec<(&'static str, usize)>,
     /// `None` (the default): Claude is not ready, and nothing ever runs.

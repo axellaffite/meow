@@ -4,7 +4,10 @@
 
 use serde::Deserialize;
 
-use crate::tasks::{FoundTask, SLACK_NO_REPLY_RULE, Task, TaskList, id_for};
+use crate::tasks::{
+    FoundTask, NOT_MY_TASK_RULE, ONE_TASK_PER_REQUEST_RULE, SLACK_NO_REPLY_RULE, Task, TaskList,
+    id_for,
+};
 
 pub const SYNC_FENCE: &str = "meow-sync";
 /// How far back the very first check looks for new things.
@@ -33,8 +36,8 @@ pub struct SyncFound {
     pub duplicate_of: Option<String>,
 }
 
-/// The new items worth adding: not a repeat of a task I ticked off (the check's
-/// `duplicate_of`, checked against the list), and not listed yet.
+/// The new items worth adding: not a repeat of a listed task, open or ticked
+/// off (the check's `duplicate_of`, checked against the list), and not listed yet.
 pub fn fresh(report: &SyncReport, list: &TaskList) -> Vec<FoundTask> {
     report
         .new
@@ -44,7 +47,7 @@ pub fn fresh(report: &SyncReport, list: &TaskList) -> Vec<FoundTask> {
                 .duplicate_of
                 .as_deref()
                 .and_then(|id| list.get(id))
-                .is_some_and(|task| task.is_done());
+                .is_some();
             !repeat && id_for(&item.found).is_some() && list.find(&item.found).is_none()
         })
         .map(|item| item.found.clone())
@@ -92,13 +95,14 @@ pub fn prompt(open: &[&Task], handled: &[&Task], since: Option<u64>, now: u64) -
          an answer, emails waiting for my answer. {SLACK_NO_REPLY_RULE} A search result shows the \
          message, not what came \
          after it: before reporting a Slack message, read its conversation (and its thread) from \
-         that message on, and leave it out if I answered there. {SLACK_REPLY_RULE} Skip anything \
-         already in the open list, under the same title or link.\n\
-         3. Compare each item of step 2 with the handled list below: a handled task is the same \
-         when it is the same request (same Slack message or thread, same issue, same pull \
-         request, same email), even when its title is worded differently or its link is missing. \
-         Do not report it again: give it that handled task's id as \"duplicate_of\". Otherwise \
-         \"duplicate_of\" is null. When in doubt, report the item with null.\n\n\
+         that message on, and leave it out if I answered there. {SLACK_REPLY_RULE} \
+         {NOT_MY_TASK_RULE} {ONE_TASK_PER_REQUEST_RULE}\n\
+         3. Compare each item of step 2 with the open tasks and the handled list below: a task \
+         is the same when it is the same request (same Slack message, DM or thread, same issue, \
+         same pull request, same email, or one of these about another), even when its title is \
+         worded differently, its source differs or its link is missing. Give it that task's id \
+         as \"duplicate_of\". Otherwise \"duplicate_of\" is null. When in doubt, report the \
+         item with null.\n\n\
          Open tasks (JSON):\n{}\n\n\
          Handled tasks, I have dealt with them, never report them again (JSON):\n{}\n\n\
          Reply with only a fenced code block with the info string `{SYNC_FENCE}` holding \

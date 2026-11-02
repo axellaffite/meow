@@ -142,7 +142,6 @@ pub(crate) trait Host {
     /// no attention, never a banner.
     fn record_quietly(&mut self, note: Note);
     /// Which news shows a macOS banner too (all of it until a feature says).
-    #[expect(dead_code, reason = "Settings › Notifications uses it, in its own PR")]
     fn set_banners(&mut self, banners: Banners);
     /// Marks the Activity items `about` matches as read.
     fn read_activity(&mut self, about: &dyn Fn(&Activity) -> bool);
